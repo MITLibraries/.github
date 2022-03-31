@@ -1,0 +1,11 @@
+{
+  "name": "MIT Libraries Ruby CI Workflow",
+  "description": "MIT Libraries ruby workflow for tests and code coverage",
+  "iconName": "ruby-icon",
+  "categories": [
+    "Ruby"
+  ],
+  "filePatterns": [
+    "^Gemfile"
+  ]
+}
