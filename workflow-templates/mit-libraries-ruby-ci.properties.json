@@ -1,6 +1,6 @@
 {
   "name": "MIT Libraries Ruby CI Workflow",
-  "description": "MIT Libraries ruby workflow for tests and code coverage",
+  "description": "MIT Libraries ruby workflow for tests and code coverage. [INSERT NOTE ON SIMPLECOV CONFIG]",
   "iconName": "ruby-icon",
   "categories": [
     "Ruby"

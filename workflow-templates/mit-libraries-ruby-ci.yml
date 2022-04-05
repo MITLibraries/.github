@@ -6,5 +6,5 @@ on:
     branches: [ $default-branch ]
 
 jobs:
-  call-workflow-ruby-ci:
-    uses: mitlibraries/.github/workflows/ruby-ci.yml
+  mitlibraries-ruby-ci:
+    uses: mitlibraries/.github/workflows/ruby-ci.yml@main
