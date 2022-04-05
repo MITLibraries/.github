@@ -6,5 +6,5 @@ on:
     branches: [ $default-branch ]
 
 jobs:
-  mitlibraries-ruby-ci:
-    uses: mitlibraries/.github/.github/workflows/ruby-ci.yml@main
+  tests-and-coverage:
+    uses: mitlibraries/.github/.github/workflows/ruby-shared-ci.yml@main
