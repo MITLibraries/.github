@@ -1,11 +1,11 @@
-name: Ruby CI
+name: Ruby Shared CI
 
 on:
   workflow_call:
 
 jobs:
   test:
-    name: Run Tests
+    name: Run Tests and Coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
