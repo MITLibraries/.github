@@ -1,0 +1,25 @@
+name: Validate Terraform
+
+on:
+  workflow_call:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate-terraform:
+    name: version 1.1.4
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Terraform Setup
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: 1.1.4
+      
+      - name: Check format and validate
+        run:
+          terraform fmt -check -recursive; terraform init -backend=false; terraform validate

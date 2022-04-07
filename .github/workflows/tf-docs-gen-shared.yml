@@ -1,0 +1,25 @@
+# This action appends a terraform docs markdown to the readme
+
+name: Generate terraform docs
+
+on:
+  workflow_call:
+
+jobs:
+  docs:
+    name: terraform-docs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        ref: ${{ github.event.pull_request.head.ref }}
+
+    - name: Render terraform docs and push changes back to PR
+      uses: terraform-docs/gh-actions@main
+      with:
+        working-dir: .
+        output-file: README.md
+        output-method: inject
+        git-push: "true"
+        args: --html=false --anchor=false
+        

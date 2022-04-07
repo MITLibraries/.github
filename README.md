@@ -33,3 +33,13 @@ require 'simplecov'
 - That's it! Adding the shared workflow should now run the standard tests and code coverage checks.
 
 If you don't want to use the Starter Workflow to add this Action, it is still a good place to see how to call this Shared Workflow.
+
+## Terraform
+
+Since we use a template repo for all our Terraform repos, we don't need starter templates. But, we can definitely use shared workflows! There are three workflows in [`.github/workflows`](./.github/workflows) that are used in all of our Terraform repos: 
+
+* `terraform validate`: we always validate the Terraform code
+* `checkov`: we always run a security check on the Terraform code
+* `terraform-docs`: we automatically update the `README.md` with the output from the `terraform-docs` command
+
+All these shared workflows have `tf-` as a prefix.
