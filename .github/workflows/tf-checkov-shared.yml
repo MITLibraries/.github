@@ -1,0 +1,27 @@
+## This github action runs Checkov against any terraform in the base directory. 
+## Checkov looks for common security related mistakes in terraform
+## Checkov generates findings and shows them in the actions tab.
+## More info about the action can be found here: https://www.checkov.io/4.Integrations/GitHub%20Actions.html
+## More info about what it checks can be found here: https://www.checkov.io/5.Policy%20Index/terraform.html
+
+name: Checkov
+on:
+  workflow_call:
+
+jobs:
+  checkov:
+    name: run checkov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v1
+        with:
+          python-version: 3.8
+      - name: Test with Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform 
+          quiet: true
