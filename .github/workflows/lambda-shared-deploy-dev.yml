@@ -1,0 +1,53 @@
+# This workflow runs lambda container deployments in dev
+# Requirements: Calling repo must contain a  Makefile with the following commands
+# * `make dist-dev`
+# * `make publish-dev`
+# * `make update-lambda-dev`
+name: Dev Lambda Container Deploy
+
+on:
+  workflow_call:
+    inputs:
+      GHA_ROLE:
+        required: true
+        type: string
+      REGION:
+        required: true
+        type: string
+      ACCOUNT:
+        required: true
+        type: string
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_REGION: ${{ inputs.REGION }}
+  AWS_ACCOUNT_ID: ${{ inputs.ACCOUNT }}
+  IAM_ROLE: ${{ inputs.GHA_ROLE }}
+
+jobs:
+  deploy:
+    name: Deploy dev build
+    runs-on: ubuntu-latest
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.IAM_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build image
+        run: make dist-dev
+      - name: Push image
+        run: make publish-dev
+      - name: Update lambda function
+        run: make update-lambda-dev
