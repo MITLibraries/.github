@@ -1,0 +1,77 @@
+# This workflow runs Lambda container promote-to-prod automated deployments
+# Requirements: Calling repo must contain a Makefile with the following commands
+# * `make gha-download-stage`
+# * `make gha-deploy-prod`
+# * `make gha-update-lambda`
+# Details in repo README
+name: Lambda Container Deploy
+ 
+on:
+  workflow_call:
+    inputs:
+      GHA_ROLE_STAGE:
+        required: true
+        type: string
+      GHA_ROLE_PROD:
+        required: true
+        type: string
+      REGION:
+        required: true
+        type: string
+      FUNC:
+        required: true
+        type: string
+      REPO:
+        required: true
+        type: string
+    secrets:
+      AWS_ACCT_STAGE:
+        required: true
+      AWS_ACCT_PROD:
+        required: true
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+# eventually we can pass in different regions and/or account IDs. for now, restricting to Dev1
+env:
+  AWS_REGION: ${{ inputs.REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCT_STAGE }}
+  AWS_ACCOUNT_ID_PROD: ${{ secrets.AWS_ACCT_PROD }}
+  IAM_ROLE: ${{ inputs.GHA_ROLE_STAGE }}
+  IAM_ROLE_PROD: ${{ inputs.GHA_ROLE_PROD }}
+  FUNC_NAME: ${{ inputs.FUNC }}
+  REPO_NAME: ${{ inputs.REPO }}
+
+jobs:
+  deploy:
+    name: Deploy build to Prod
+    # This is really a copy/paste of the container image from Dev1 to Stage-Workloads
+    runs-on: ubuntu-latest
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Configure AWS credentials for Stage
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.IAM_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Download image from Stage
+        run: make gha-download-stage
+
+      - name: Configure AWS credentials for Prod
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID_PROD }}:role/${{ env.IAM_ROLE_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Upload image to Prod
+        run: make gha-deploy-prod
+      - name: Update lambda function in Prod
+        run: make gha-update-lambda

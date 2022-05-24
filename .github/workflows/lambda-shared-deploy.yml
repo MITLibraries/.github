@@ -1,9 +1,10 @@
-# This workflow runs lambda container deployments in dev
-# Requirements: Calling repo must contain a  Makefile with the following commands
-# * `make dist-dev`
-# * `make publish-dev`
-# * `make update-lambda-dev`
-name: Dev Lambda Container Deploy
+# This workflow runs lambda container deployments for dev and stage
+# Requirements: Calling repo must contain a Makefile with the following commands
+# * `make gha-dist`
+# * `make gha-publish`
+# * `make gha-update-lambda`
+# Details in the repo README
+name: Lambda Container Deploy
 
 on:
   workflow_call:
@@ -14,23 +15,32 @@ on:
       REGION:
         required: true
         type: string
-      ACCOUNT:
+      FUNC:
         required: true
         type: string
+      REPO:
+        required: true
+        type: string
+    secrets:
+      AWS_ACCT:
+        required: true
 
 # Set defaults
 defaults:
   run:
     shell: bash
 
+# eventually we can pass in different regions and/or account IDs. for now, restricting to Dev1
 env:
   AWS_REGION: ${{ inputs.REGION }}
-  AWS_ACCOUNT_ID: ${{ inputs.ACCOUNT }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCT }}
   IAM_ROLE: ${{ inputs.GHA_ROLE }}
+  FUNC_NAME: ${{ inputs.FUNC }}
+  REPO_NAME: ${{ inputs.REPO }}
 
 jobs:
   deploy:
-    name: Deploy dev build
+    name: Deploy build
     runs-on: ubuntu-latest
     # These permissions are needed to interact with GitHub's OIDC Token endpoint.
     permissions:
@@ -46,8 +56,8 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Build image
-        run: make dist-dev
+        run: make gha-dist
       - name: Push image
-        run: make publish-dev
+        run: make gha-publish
       - name: Update lambda function
-        run: make update-lambda-dev
+        run: make gha-update-lambda
