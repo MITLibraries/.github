@@ -15,10 +15,10 @@ on:
       REGION:
         required: true
         type: string
-      FUNC:
+      FUNCTION_NAME:
         required: true
         type: string
-      REPO:
+      ECR_REPOSITORY_NAME:
         required: true
         type: string
     secrets:
@@ -35,8 +35,8 @@ env:
   AWS_REGION: ${{ inputs.REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCT }}
   IAM_ROLE: ${{ inputs.GHA_ROLE }}
-  FUNC_NAME: ${{ inputs.FUNC }}
-  REPO_NAME: ${{ inputs.REPO }}
+  FUNC_NAME: ${{ inputs.FUNCTION_NAME }}
+  REPO_NAME: ${{ inputs.ECR_REPOSITORY_NAME }}
 
 jobs:
   deploy:

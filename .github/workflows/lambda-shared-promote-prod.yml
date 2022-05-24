@@ -18,10 +18,10 @@ on:
       REGION:
         required: true
         type: string
-      FUNC:
+      FUNCTION_NAME:
         required: true
         type: string
-      REPO:
+      ECR_REPOSITORY_NAME:
         required: true
         type: string
     secrets:
@@ -35,20 +35,20 @@ defaults:
   run:
     shell: bash
 
-# eventually we can pass in different regions and/or account IDs. for now, restricting to Dev1
+# Set Environment variables for runner
 env:
   AWS_REGION: ${{ inputs.REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCT_STAGE }}
   AWS_ACCOUNT_ID_PROD: ${{ secrets.AWS_ACCT_PROD }}
   IAM_ROLE: ${{ inputs.GHA_ROLE_STAGE }}
   IAM_ROLE_PROD: ${{ inputs.GHA_ROLE_PROD }}
-  FUNC_NAME: ${{ inputs.FUNC }}
-  REPO_NAME: ${{ inputs.REPO }}
+  FUNC_NAME: ${{ inputs.FUNCTION_NAME }}
+  REPO_NAME: ${{ inputs.ECR_REPOSITORY_NAME }}
 
 jobs:
   deploy:
     name: Deploy build to Prod
-    # This is really a copy/paste of the container image from Dev1 to Stage-Workloads
+    # Download from Stage then upload to Prod
     runs-on: ubuntu-latest
     # These permissions are needed to interact with GitHub's OIDC Token endpoint.
     permissions:

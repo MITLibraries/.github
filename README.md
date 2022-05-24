@@ -70,8 +70,7 @@ All these shared workflows have `tf-` as a prefix.
 
 ## Publish Lambda Container
 
-**WIP**
-This is a work-in-progress, but it seems that the workflow automation for deploying updated containers in Lambda functions will be similar across repos. There are two workflows:
+**WIP**: This is a work-in-progress, but it seems that the workflow automation for deploying updated containers in Lambda functions will be similar across repos. There are two workflows:
 
 - For build/push/update of container & Lambda in dev and stage: [lambda-shared-deploy.yml](.github/workflows/lambda-shared-deploy.yml)
 - For build/push/update of container & Lambda in prod: [lambda-shared-promote-prod.yml](.github/workflows/lambda-shared-promote-prod.yml)
@@ -99,7 +98,8 @@ and it must contain the following commands
 
 ```makefile
 gha-dist: ## Build docker container (only used by GitHub Actions)
-  docker build --platform linux/amd64 -t $(ECR)/$(ECR_REPO):latest \
+  docker build --platform linux/amd64 \
+    -t $(ECR)/$(ECR_REPO):latest \
     -t $(ECR)/$(ECR_REPO):`git describe --always` . 
 
 gha-publish: ## Push the dev image to ECR in Stage-Workloads (only used by GitHub Actions)
@@ -108,9 +108,7 @@ gha-publish: ## Push the dev image to ECR in Stage-Workloads (only used by GitHu
   docker push $(ECR)/$(ECR_REPO):`git describe --always`
 
 gha-update-lambda: ## Updates the lambda with whatever is the most recent image in the ecr (only used by GitHub Actions)
-  aws lambda update-function-code \
-    --function-name $(FUNC) \
-    --image-uri $(ECR)/$(ECR_REPO):latest
+  aws lambda update-function-code --function-name $(FUNC) --image-uri $(ECR)/$(ECR_REPO):latest
 ```
 
 A sample caller workflow should look like
@@ -119,11 +117,11 @@ A sample caller workflow should look like
 jobs:
   deploy:
     name: Deploy Container to Lambda in Dev1
-    uses: ./.github/workflows/lambda-shared-deploy.yml
+    uses: mitlibraries/.github/.github/workflows/lambda-shared-deploy.yml@main
     with:
       GHA_ROLE: "lambda-image-gha-dev"
       REGION: "us-east-1"
-      FUNC_NAME: "dev-automation-stack-infra-lambda-image"
+      FUNC_NAME: "dev-lambda-image"
       REPO_NAME: "lambda-image"
     secrets:
       AWS_ACCT: ${{ secrets.AWS_DEV1_ACCT }}
@@ -159,12 +157,12 @@ A sample caller workflow would look like
 jobs:
   deploy:
     name: Promote
-    uses: .github/workflows/lambda-shared-promote-prod.yml
+    uses: mitlibraries/.github/.github/workflows/lambda-shared-promote-prod.yml@main
     with:
       GHA_ROLE_STAGE: "lambda-image-gha-stage"
       GHA_ROLE_PROD: "lambda-image-gha-prod"
       REGION: "us-east-1"
-      FUNC: "prod-automation-stack-infra-lambda-image"
+      FUNC: "prod-lambda-image"
       REPO: "lambda-image"
     secrets:
       AWS_ACCT_STAGE: ${{ secrets.AWS_STAGE_ACCT }}
@@ -174,3 +172,7 @@ jobs:
 ### Additional Requirements/Dependencies
 
 It also depends on the appropriate infrastructure in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS.
+
+## Publish Fargate Container
+
+**WIP**: This hasn't started yet.
