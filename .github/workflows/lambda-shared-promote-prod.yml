@@ -42,8 +42,6 @@ env:
   AWS_ACCOUNT_ID_PROD: ${{ secrets.AWS_ACCT_PROD }}
   IAM_ROLE: ${{ inputs.GHA_ROLE_STAGE }}
   IAM_ROLE_PROD: ${{ inputs.GHA_ROLE_PROD }}
-  # FUNC_NAME: ${{ inputs.FUNCTION_NAME }}
-  # REPO_NAME: ${{ inputs.ECR_REPOSITORY_NAME }}
 
 jobs:
   deploy:
