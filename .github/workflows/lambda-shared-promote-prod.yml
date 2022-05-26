@@ -18,12 +18,12 @@ on:
       REGION:
         required: true
         type: string
-      FUNCTION_NAME:
-        required: true
-        type: string
-      ECR_REPOSITORY_NAME:
-        required: true
-        type: string
+      # FUNCTION_NAME:
+      #   required: true
+      #   type: string
+      # ECR_REPOSITORY_NAME:
+      #   required: true
+      #   type: string
     secrets:
       AWS_ACCT_STAGE:
         required: true
@@ -42,8 +42,8 @@ env:
   AWS_ACCOUNT_ID_PROD: ${{ secrets.AWS_ACCT_PROD }}
   IAM_ROLE: ${{ inputs.GHA_ROLE_STAGE }}
   IAM_ROLE_PROD: ${{ inputs.GHA_ROLE_PROD }}
-  FUNC_NAME: ${{ inputs.FUNCTION_NAME }}
-  REPO_NAME: ${{ inputs.ECR_REPOSITORY_NAME }}
+  # FUNC_NAME: ${{ inputs.FUNCTION_NAME }}
+  # REPO_NAME: ${{ inputs.ECR_REPOSITORY_NAME }}
 
 jobs:
   deploy:
