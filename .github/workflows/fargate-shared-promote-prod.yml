@@ -1,0 +1,59 @@
+# This workflow runs Fargate container promote-to-prod automated deployments
+name: Prod Fargate Promote
+ 
+on:
+  workflow_call:
+    inputs:
+      AWS_REGION:
+        required: true
+        type: string
+      GHA_ROLE_STAGE:
+        required: true
+        type: string
+      GHA_ROLE_PROD:
+        required: true
+        type: string
+      ECR:
+        required: true
+        type: string
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Promote Build to Prod
+    # Download from Stage then upload to Prod
+    runs-on: ubuntu-latest
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Configure AWS credentials for Stage
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE_STAGE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+      - name: Download container from Stage
+        run: |
+          docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
+          docker pull ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest
+          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest
+          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always`
+
+      - name: Configure AWS credentials for Prod
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Upload container to Prod
+        run: |
+          docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
+          docker push ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest
+          docker push ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always`
