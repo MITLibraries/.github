@@ -47,8 +47,8 @@ jobs:
         run: |
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker pull ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest
-          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}/${{ inputs.ECR_PROD }}:latest
-          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}/${{ inputs.ECR_PROD }}:`git describe --always`
+          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:latest
+          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`git describe --always`
 
       - name: Configure AWS credentials for Prod
         uses: aws-actions/configure-aws-credentials@v1
