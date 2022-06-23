@@ -9,16 +9,14 @@ defaults:
 
 jobs:
   validate-terraform:
-    name: version 1.1.4
+    name: Check with a terraform fmt
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v2
 
       - name: Terraform Setup
-        uses: hashicorp/setup-terraform@v1
-        with:
-          terraform_version: 1.1.4
+        uses: hashicorp/setup-terraform@v2
       
       - name: Check format and validate
         run:
