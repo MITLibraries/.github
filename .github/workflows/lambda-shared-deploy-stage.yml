@@ -40,7 +40,7 @@ jobs:
           aws-region: ${{ inputs.AWS_REGION }}
 
       - name: Build container
-        run: docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always` .
+        run: DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always` .
 
       - name: Push container
         run: |
