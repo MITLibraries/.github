@@ -36,11 +36,33 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_DEV }}:role/${{ inputs.GHA_ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}
 
+      - name: Create tags
+        id: tags
+        run: |
+          if [ $GITHUB_EVENT_NAME = "workflow_dispatch" ]; then
+            TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8)
+          else
+            TAG_SHA=$(echo ${{ github.event.pull_request.head.sha }} | cut -c 1-8)
+          fi
+          if [ $GITHUB_EVENT_NAME = "workflow_dispatch" ]; then
+            TAG_PR=$GITHUB_EVENT_NAME
+          else
+            TAG_PR=$(echo "PR-"${{ github.event.pull_request.number }})
+          fi
+          echo "::set-output name=tag_sha::$TAG_SHA"
+          echo "::set-output name=tag_pr::$TAG_PR"
+
       - name: Build container
-        run: DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always` .
+        run: |
+          TAG_SHA="${{ steps.tags.outputs.tag_sha }}"
+          TAG_PR="${{ steps.tags.outputs.tag_pr }}"
+          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $TAG_SHA` -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $TAG_PR` .
 
       - name: Push container
         run: |
+          TAG_SHA="${{ steps.tags.outputs.tag_sha }}"
+          TAG_PR="${{ steps.tags.outputs.tag_pr }}"
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest
-          docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always`
+          docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $TAG_SHA`
+          docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $TAG_PR`

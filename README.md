@@ -68,7 +68,6 @@ Since we use a template repo for all our Terraform repos, we don't need starter 
 
 All these shared workflows have `tf-` as a prefix.
 
-
 ## Publish Fargate Container
 
 There are three workflows associated with publishing Docker containers. **Note**: The automated workflows deploy the updated container to the ECR repository, but the workflows **do not** force a container-based service to restart!
@@ -79,7 +78,7 @@ There are three workflows associated with publishing Docker containers. **Note**
 
 ### fargate-shared-deploy-dev.yml & fargate-shared-deploy-stage.yml
 
-These two workflows are almost exactly the same. They require 
+These two workflows are almost exactly the same. They require
 
 - shared secrets that exists in our MITLibraries GitHub Organization.
 - a caller workflow that passes certain values to the shared workflow
@@ -97,6 +96,17 @@ jobs:
       GHA_ROLE: "<name_of_iam_role_with_ecr_publish_permissions>"
       ECR: "<name_of_ecr_repository>"
 ```
+
+The container that is pushed to the AWS ECR Repository in Dev1 is tagged with
+
+- the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
+- the PR number for the repo
+- the word "latest"
+
+The container that is pushed to the AWS ECR Repository in Stage-Workloads is tagged with
+
+- the short (8 character) SHA of the merge commit
+- the word "latest"
 
 ### fargate-shared-promote-prod.yml
 
@@ -118,6 +128,12 @@ jobs:
       ECR_PROD: "<name_of_ecr_repository_in_prod>"
 ```
 
+The container that is pushed to the AWS ECR Repository in Prod is tagged with
+
+- the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
+- the release tag
+- the word "latest"
+
 ### Additional Requirements/Dependencies
 
 It also depends on the appropriate infrastructure in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS.
@@ -126,7 +142,7 @@ It also depends on the appropriate infrastructure in place, particularly the OID
 
 ## Publish Lambda Container
 
-This is almost exactly the same as the Fargate workflows. The only difference is the inclusion of the name of the Lambda function itself.
+This is almost exactly the same as the Fargate workflows. The only difference is the inclusion of the name of the Lambda function itself. See the Fargate section above for full details.
 
 ### lambda-shared-deploy-dev.yml and lambda-shared-deploy-stage.yml
 

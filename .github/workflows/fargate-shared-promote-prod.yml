@@ -43,12 +43,22 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE_STAGE }}
           aws-region: ${{ inputs.AWS_REGION }}
-      - name: Download container from Stage
+      
+      - name: Create tags
+        id: tags
         run: |
+          echo "::set-output name=tag_sha::$GITHUB_SHA"
+          echo "::set-output name=tag_release::${{ github.event.release.tag_name }}"
+
+      - name: Download from Stage and re-tag
+        run: |
+          TAG_SHA="${{ steps.tags.outputs.tag_sha }}"
+          TAG_RELEASE="${{ steps.tags.outputs.tag_release }}"
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker pull ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest
           docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:latest
-          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`git describe --always`
+          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`echo $TAG_SHA`
+          docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`echo $TAG_RELEASE`
 
       - name: Configure AWS credentials for Prod
         uses: aws-actions/configure-aws-credentials@v1
@@ -57,6 +67,9 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Upload container to Prod
         run: |
+          TAG_SHA="${{ steps.tags.outputs.tag_sha }}"
+          TAG_RELEASE="${{ steps.tags.outputs.tag_release }}"
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker push ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:latest
-          docker push ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`git describe --always`
+          docker push ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`echo $TAG_SHA`
+          docker push ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`echo $TAG_RELEASE`
