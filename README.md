@@ -68,111 +68,122 @@ Since we use a template repo for all our Terraform repos, we don't need starter 
 
 All these shared workflows have `tf-` as a prefix.
 
-## Publish Lambda Container
+## Publish Fargate Container
 
-**WIP**: This is a work-in-progress, but it seems that the workflow automation for deploying updated containers in Lambda functions will be similar across repos. There are two workflows:
+There are three workflows associated with publishing Docker containers. **Note**: The automated workflows deploy the updated container to the ECR repository, but the workflows **do not** force a container-based service to restart!
 
-- For build/push/update of container & Lambda in dev and stage: [lambda-shared-deploy.yml](.github/workflows/lambda-shared-deploy.yml)
-- For build/push/update of container & Lambda in prod: [lambda-shared-promote-prod.yml](.github/workflows/lambda-shared-promote-prod.yml)
+- For build/push/update of Docker container in dev: [fargate-shared-deploy-dev.yml](.github/workflows/fargate-shared-deploy-dev.yml)
+- For build/push/update of Docker container in stage: [fargate-shared-deploy-stage.yml](.github/workflows/fargate-shared-deploy-stage.yml)
+- For promoting container to prod: [fargate-shared-promote-prod.yml](.github/workflows/fargate-shared-promote-prod.yml)
 
-### lambda-shared-deploy.yml
+### fargate-shared-deploy-dev.yml & fargate-shared-deploy-stage.yml
 
-This requires
+These two workflows are almost exactly the same. They require
 
-1. certain commands in the Makefile of the Lambda/Container repo
-1. a caller workflow that passes certain values to the shared workflow to set the environment in the runner
-1. secrets set in the repo (or set as shared secrets for all of MITLibraries GitHub Org)
-
-The `Makefile` header must contain
-
-```makefile
-SHELL=/bin/bash
-DATETIME:=$(shell date -u +%Y%m%dT%H%M%SZ)
-FUNC=$(FUNC_NAME)
-ECR_REPO=$(REPO_NAME)
-ECR=$(shell aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com
-ECR_PROD=$(AWS_ACCOUNT_ID_PROD).dkr.ecr.us-east-1.amazonaws.com
-```
-
-and it must contain the following commands
-
-```makefile
-gha-dist: ## Build docker container (only used by GitHub Actions)
-  docker build --platform linux/amd64 \
-    -t $(ECR)/$(ECR_REPO):latest \
-    -t $(ECR)/$(ECR_REPO):`git describe --always` . 
-
-gha-publish: ## Push the dev image to ECR in Stage-Workloads (only used by GitHub Actions)
-  docker login -u AWS -p $$(aws ecr get-login-password --region us-east-1) $(ECR)
-  docker push $(ECR)/$(ECR_REPO):latest
-  docker push $(ECR)/$(ECR_REPO):`git describe --always`
-
-gha-update-lambda: ## Updates the lambda with whatever is the most recent image in the ecr (only used by GitHub Actions)
-  aws lambda update-function-code --function-name $(FUNC) --image-uri $(ECR)/$(ECR_REPO):latest
-```
+- shared secrets that exists in our MITLibraries GitHub Organization.
+- a caller workflow that passes certain values to the shared workflow
 
 A sample caller workflow should look like
 
 ```yaml
 jobs:
   deploy:
-    name: Deploy Container to Lambda in Dev1
-    uses: mitlibraries/.github/.github/workflows/lambda-shared-deploy.yml@main
+    name: <env> Deploy Fargate Container
+    uses: mitlibraries/.github/.github/workflows/fargate-shared-deploy-<env>.yml@main
+    secrets: inherit
     with:
-      GHA_ROLE: "lambda-image-gha-dev"
-      REGION: "us-east-1"
-      FUNC_NAME: "dev-lambda-image"
-      REPO_NAME: "lambda-image"
-    secrets:
-      AWS_ACCT: ${{ secrets.AWS_DEV1_ACCT }}
+      AWS_REGION: "<aws_region>"
+      GHA_ROLE: "<name_of_iam_role_with_ecr_publish_permissions>"
+      ECR: "<name_of_ecr_repository>"
 ```
 
-### lambda-shared-promote-prod.yml
+The container that is pushed to the AWS ECR Repository in Dev1 is tagged with
 
-Similar to the previous workflow, there are multiple requirements for the `Makefile` and the caller workflow.
+- the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
+- the PR number for the repo
+- the word "latest"
 
-The `Makefile` needs the following commands (the header is the same as above). Note that the first command here is the same as the `gha-update-lambda` command as above.
+The container that is pushed to the AWS ECR Repository in Stage-Workloads is tagged with
 
-```makefile
-gha-update-lambda: ## Updates the lambda with whatever is the most recent image in the ecr (only used by GitHub Actions)
-  aws lambda update-function-code \
-    --function-name $(FUNC) \
-    --image-uri $(ECR)/$(ECR_REPO):latest
+- the short (8 character) SHA of the merge commit
+- the word "latest"
 
-gha-download-stage: ## Get the stage image from ECR in Stage (only used by GitHub Actions)
-  docker login -u AWS -p $$(aws ecr get-login-password --region us-east-1) $(ECR)
-  docker pull $(ECR)/$(ECR_REPO):latest
-  docker tag $(ECR)/$(ECR_REPO):latest $(ECR_PROD)/$(ECR_REPO):latest
-  docker tag $(ECR)/$(ECR_REPO):latest $(ECR_PROD)/$(ECR_REPO):`git describe --always`
+### fargate-shared-promote-prod.yml
 
-gha-deploy-prod: ## Copy the downloaded image from runner to Prod ECR (only used by GitHub Actions)
-  docker login -u AWS -p $$(aws ecr get-login-password --region us-east-1) $(ECR_PROD)
-  docker push $(ECR_PROD)/$(ECR_REPO):latest
-  docker push $(ECR_PROD)/$(ECR_REPO):`git describe --always`
-```
+The automated deploys to dev & stage actually build the container through GitHub Actions. The promote to prod workflow just copies the container from stage to prod to ensure that there is no difference at all in what is deployed.
 
 A sample caller workflow would look like
 
 ```yaml
 jobs:
   deploy:
-    name: Promote
-    uses: mitlibraries/.github/.github/workflows/lambda-shared-promote-prod.yml@main
+    name: Prod Promote Fargate Container
+    uses: mitlibraries/.github/.github/workflows/fargate-shared-promote-prod.yml@main
+    secrets: inherit
     with:
-      GHA_ROLE_STAGE: "lambda-image-gha-stage"
-      GHA_ROLE_PROD: "lambda-image-gha-prod"
-      REGION: "us-east-1"
-      FUNC: "prod-lambda-image"
-      REPO: "lambda-image"
-    secrets:
-      AWS_ACCT_STAGE: ${{ secrets.AWS_STAGE_ACCT }}
-      AWS_ACCT_PROD: ${{ secrets.AWS_PROD_ACCT }}
+      AWS_REGION: "<aws_region>"
+      GHA_ROLE_STAGE: "<name_of_iam_role_with_ecr_publish_permissions_in_stage>"
+      GHA_ROLE_PROD: "<name_of_iam_role_with_ecr_publish_permissions_in_prod>"
+      ECR_STAGE: "<name_of_ecr_repository_in_stage>"
+      ECR_PROD: "<name_of_ecr_repository_in_prod>"
+```
+
+The container that is pushed to the AWS ECR Repository in Prod is tagged with
+
+- the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
+- the release tag
+- the word "latest"
+
+### Additional Requirements/Dependencies
+
+It also depends on the appropriate infrastructure in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS.
+
+**Note**: The caller workflows are generated by the Terraform code that creates the ECR and associated IAM Roles and permissions. It is up to the engineer to copy that text from the Terraform Cloud outputs to the application repository.
+
+## Publish Lambda Container
+
+This is almost exactly the same as the Fargate workflows. The only difference is the inclusion of the name of the Lambda function itself. See the Fargate section above for full details.
+
+### lambda-shared-deploy-dev.yml and lambda-shared-deploy-stage.yml
+
+A sample caller workflow should look like
+
+```yaml
+jobs:
+  deploy:
+    name: <env> Deploy lambda Container
+    uses: mitlibraries/.github/.github/workflows/lambda-shared-deploy-<env>.yml@main
+    secrets: inherit
+    with:
+      AWS_REGION: "<aws_region>"
+      GHA_ROLE: "<name_of_iam_role_with_ecr_publish_permissions>"
+      ECR: "<name_of_ecr_repository>"
+      FUNCTION: "<name_of_lambda_function>"
+```
+
+### lambda-shared-promote-prod.yml
+
+This is almost exactly the same as for Fargate containers, just with the addition of the Lambda function name.
+
+A sample caller workflow would look like
+
+```yaml
+jobs:
+  deploy:
+    name: Prod Promote Lambda Container
+    uses: mitlibraries/.github/.github/workflows/lambda-shared-promote-prod.yml@main
+    secrets: inherit
+    with:
+      AWS_REGION: "<aws_region>"
+      GHA_ROLE_STAGE: "<name_of_iam_role_with_ecr_publish_permissions_in_stage>"
+      GHA_ROLE_PROD: "<name_of_iam_role_with_ecr_publish_permissions_in_prod>"
+      ECR_STAGE: "<name_of_ecr_repository_in_stage>"
+      ECR_PROD: "<name_of_ecr_repository_in_prod>"
+      FUNCTION: "<name_of_lambda_function_in_prod>"
 ```
 
 ### Additional Requirements/Dependencies
 
 It also depends on the appropriate infrastructure in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS.
 
-## Publish Fargate Container
-
-**WIP**: This hasn't started yet.
+**Note**: The caller workflows are generated by the Terraform code that creates the ECR and associated IAM Roles and permissions. It is up to the engineer to copy that text from the Terraform Cloud outputs to the application repository.

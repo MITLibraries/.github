@@ -40,13 +40,13 @@ jobs:
           aws-region: ${{ inputs.AWS_REGION }}
 
       - name: Build container
-        run: docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always` .
+        run: DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $GITHUB_SHA | cut -c 1-8` .
 
       - name: Push container
         run: |
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker push ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest
-          docker push ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`git describe --always`
+          docker push ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $GITHUB_SHA | cut -c 1-8`
 
       - name: Update Lambda Function
         run: aws lambda update-function-code --function-name ${{ inputs.FUNCTION }} --image-uri ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest --query "LastUpdateStatusReasonCode" --output text
