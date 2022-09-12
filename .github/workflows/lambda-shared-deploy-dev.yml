@@ -26,9 +26,8 @@ jobs:
   deploy:
     name: Deploy build
     runs-on: ubuntu-latest
-    # This line adds a check for the "dependencies" label on a PR, and does NOT run the workflow if it is present
-    # That means that if you want this workflow to run on a dependabot PR, you need to remove the "dependencies" label it adds by default
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'dependencies')}}
+    # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
+    if: ${{ github.triggering_actor != 'dependabot[bot]' }}
     # These permissions are needed to interact with GitHub's OIDC Token endpoint.
     permissions:
       id-token: write
