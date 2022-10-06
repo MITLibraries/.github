@@ -1,7 +1,7 @@
 # This workflow runs tests and sends a coverage report to Coveralls
-# Requirements: repo must contain a .python-version file, use pipenv for dependency
-# management, use the pytest framework for testing, and have coverage in its dev
-# dependencies.
+# Requirements: Calling repo must use pipenv for dependency management, contain a
+# .python-version file, and contain a Makefile with `make test` and `make coveralls`
+# commands.
 name: Python Shared Test Workflow
 
 on:
@@ -32,8 +32,8 @@ jobs:
 
       - name: Run tests and make coverage report
         run: |
-          pipenv run coverage run --source=. -m pytest
-          pipenv run coverage lcov -o ./coverage/lcov.info
+          make test
+          make coveralls
 
       - name: Coveralls
         uses: coverallsapp/github-action@master
