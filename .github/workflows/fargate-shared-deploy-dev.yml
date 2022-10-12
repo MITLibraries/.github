@@ -13,6 +13,9 @@ on:
       ECR:
         required: true
         type: string
+      DEPS:
+        required: false
+        type: string
 
 # Set defaults
 defaults:
@@ -51,19 +54,19 @@ jobs:
           else
             TAG_PR=$(echo "PR-"${{ github.event.pull_request.number }})
           fi
-          echo "::set-output name=tag_sha::$TAG_SHA"
-          echo "::set-output name=tag_pr::$TAG_PR"
+          echo "tag_sha=${TAG_SHA}" >> $GITHUB_ENV
+          echo "tag_pr=${TAG_PR}" >> $GITHUB_ENV
 
       - name: Build container
         run: |
-          TAG_SHA="${{ steps.tags.outputs.tag_sha }}"
-          TAG_PR="${{ steps.tags.outputs.tag_pr }}"
+          TAG_SHA="${{ env.tag_sha }}"
+          TAG_PR="${{ env.tag_pr }}"
           DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $TAG_SHA` -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $TAG_PR` .
 
       - name: Push container
         run: |
-          TAG_SHA="${{ steps.tags.outputs.tag_sha }}"
-          TAG_PR="${{ steps.tags.outputs.tag_pr }}"
+          TAG_SHA="${{ env.tag_sha }}"
+          TAG_PR="${{ env.tag_pr }}"
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest
           docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo $TAG_SHA`
