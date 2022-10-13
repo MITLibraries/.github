@@ -20,7 +20,7 @@ jobs:
           echo "python_version=${python_version}" >> $GITHUB_ENV
 
       - name: Set up python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ env.python_version }}
           architecture: x64
