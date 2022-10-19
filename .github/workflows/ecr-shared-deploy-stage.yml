@@ -62,12 +62,6 @@ jobs:
         with:
           architecture: x64
           cache: 'pipenv'
-      - name: Setup Python
-        # Run the Python setup only when there is a .python-version file in the root
-        # of the repository. Otherwise, this step is skipped.
-        if: ${{ env.python_repo = 1 }}
-        run: |
-          python -m pip install --upgrade pip pipenv
 
       - name: Get Ruby
         # Run the Ruby setup setup only when there is a .ruby-version file in the 
