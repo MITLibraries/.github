@@ -1,0 +1,113 @@
+# Dev ECS Container Deployment for Fargate & Lambda
+name: Dev Container Deploy
+
+on:
+  workflow_call:
+    inputs:
+      AWS_REGION:
+        required: true
+        type: string
+      GHA_ROLE:
+        required: true
+        type: string
+      ECR:
+        required: true
+        type: string
+      FUNCTION:
+        required: false
+        type: string
+      PREBUILD:
+        required: false
+        type: string
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Build and Deploy to ECR
+    runs-on: ubuntu-latest
+    # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
+    if: ${{ github.triggering_actor != 'dependabot[bot]' }}
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Check for Python or Ruby
+        # Check for the existence of files that set either the Python version or the Ruby version
+        # and capture this information for later use in the job. These values are used for
+        # conditional steps below to setup/configure the build environment for the container.
+        run: |
+          if [[ -f ".python-version" ]]; then
+            echo "python_repo=1" >> $GITHUB_ENV
+          fi
+          if [[ -f ".ruby-version" ]]; then
+            echo "ruby_repo=1" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1-node16
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_DEV }}:role/${{ inputs.GHA_ROLE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Create tags
+        # Extra effort on tagging is necessary because GHA checkout uses a "detached head" 
+        id: tags
+        run: |
+          if [ $GITHUB_EVENT_NAME = "workflow_dispatch" ]; then
+            TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8)
+          else
+            TAG_SHA=$(echo ${{ github.event.pull_request.head.sha }} | cut -c 1-8)
+          fi
+          if [ $GITHUB_EVENT_NAME = "workflow_dispatch" ]; then
+            TAG_PR=$GITHUB_EVENT_NAME
+          else
+            TAG_PR=$(echo "PR-"${{ github.event.pull_request.number }})
+          fi
+          echo "tag_sha=${TAG_SHA}" >> $GITHUB_ENV
+          echo "tag_pr=${TAG_PR}" >> $GITHUB_ENV
+
+      - name: Get Python
+        # Run the Python setup only when there is a .python-version file in the root
+        # of the repository. Otherwise, this step is skipped.
+        if: ${{ env.python_repo == 1 }}
+        uses: actions/setup-python@v4
+        with:
+          architecture: x64
+          cache: 'pipenv'
+
+      - name: Get Ruby
+        # Run the Ruby setup setup only when there is a .ruby-version file in the 
+        # root of the repository. Otherwise, this step is skipped.
+        if: ${{ env.ruby_repo == 1 }}
+        uses: ruby/setup-ruby@v1
+
+      - name: Run pre-build steps
+        # Only run this step if the app developer has specified "pre-build" commands
+        # in the caller workflow.
+        if: ${{ inputs.PREBUILD != '' }} 
+        run: ${{ inputs.PREBUILD }}
+
+      - name: Build container
+        run: |
+          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo ${{ env.tag_sha }}` -t ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo ${{ env.tag_pr }}` .
+
+      - name: Push container
+        run: |
+          docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
+          docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest
+          docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo ${{ env.tag_sha }}`
+          docker push ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:`echo ${{ env.tag_pr }}`
+
+      - name: Update Lambda Function
+        # Only update the Lambda Function if the developer passes in the Lambda Function name
+        if: ${{ inputs.FUNCTION != '' }}
+        run: aws lambda update-function-code --function-name ${{ inputs.FUNCTION }} --image-uri ${{ secrets.AWS_ACCT_DEV }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR }}:latest --query "LastUpdateStatusReasonCode" --output text
