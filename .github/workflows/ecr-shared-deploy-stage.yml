@@ -59,7 +59,7 @@ jobs:
       - name: Get Python
         # Run the Python setup only when there is a .python-version file in the root
         # of the repository. Otherwise, this step is skipped.
-        if: ${{ env.python_repo = 1 }}
+        if: ${{ env.python_repo == 1 }}
         uses: actions/setup-python@v4
         with:
           architecture: x64
@@ -68,7 +68,7 @@ jobs:
       - name: Get Ruby
         # Run the Ruby setup setup only when there is a .ruby-version file in the 
         # root of the repository. Otherwise, this step is skipped.
-        if: ${{ env.ruby_repo = 1 }}
+        if: ${{ env.ruby_repo == 1 }}
         uses: ruby/setup-ruby@v1
 
       - name: Run pre-build steps
