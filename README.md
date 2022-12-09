@@ -155,3 +155,18 @@ The container that is pushed to the AWS ECR Repository in Prod is tagged with
 ### Additional Requirements/Dependencies
 
 It also depends on the appropriate infrastructure in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS. In most cases, this is handled by the [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) repository (which also generates the GHA workflow files for each ECR repository).
+
+## Automated Publishing to CDN
+
+There are at least two static HTML repositories (future-of-libraries and oatf) that will benefit from automated publishing to the S3-based CDN in our AWS Organization. The publishing automation (for both stage & prod) is handled by one shared workflow, [cdn-shared-publish.yml](./.github/workflows/cdn-shared-publish.yml).
+
+### Requirements
+
+The following values must be passed in to the shared workflow from the caller workflow:
+
+- `AWS_REGION`: the region where the S3 bucket lives
+- `GHA_ROLE`: the OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
+- `ENVIRONMENT`: either `stage` or `prod` (this workflow is not intended for the `dev` environment)
+- `S3URI`: the full S3 URI (including the path) where the files should be uploaded
+
+To make life easy for the web devs, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow and stores it as a Terraform output in TfCloud.

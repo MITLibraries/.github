@@ -1,0 +1,53 @@
+# Static Site Web Publishing to CDN
+name: Publish Static Site to CDN
+
+on:
+  workflow_call:
+    inputs:
+      AWS_REGION:
+        required: true
+        type: string
+      GHA_ROLE:
+        required: true
+        type: string
+      ENVIRONMENT:
+        required: true
+        type: string
+      S3URI:
+        required: true
+        type: string
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    name: Publish content to CDN
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: STAGE Configure AWS credentials
+        # Only run this step if the environment is "stage"
+        if: ${{ inputs.ENVIRONMENT == 'stage' }}
+        uses: aws-actions/configure-aws-credentials@v1-node16
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: PROD Configure AWS credentials
+        # Only run this step if the environment is "prod"
+        if: ${{ inputs.ENVIRONMENT == 'prod' }}
+        uses: aws-actions/configure-aws-credentials@v1-node16
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Sync S3 content
+        run: aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" 
