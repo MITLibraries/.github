@@ -34,7 +34,7 @@ That's it! Adding the shared workflow should now run the standard tests, code co
 
 You can (optionally) add this using a Starter Workflow by going to Actions in the repository you'd like it added to, and selecting the "MIT Libraries Ruby CI Workflow" which will allow you to open a PR to add this shared workflow.
 
-Requirements
+### Requirements
 
 - Add `simplecov` and `simplecov-lcov` to the test section of Gemfile
 - `bundle install`
@@ -158,7 +158,7 @@ It also depends on the appropriate infrastructure in place, particularly the OID
 
 ## Automated Publishing to CDN
 
-There are at least two static HTML repositories (future-of-libraries and oatf) that will benefit from automated publishing to the S3-based CDN in our AWS Organization. The publishing automation (for both stage & prod) is handled by one shared workflow, [cdn-shared-publish.yml](./.github/workflows/cdn-shared-publish.yml).
+There are at least two static HTML repositories (future-of-libraries and open-access-task-force) that will benefit from automated publishing to the S3-based CDN in our AWS Organization. The publishing automation (for both stage & prod) is handled by one shared workflow, [cdn-shared-publish.yml](./.github/workflows/cdn-shared-publish.yml).
 
 ### Requirements
 

@@ -33,6 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: DEV Configure AWS credentials
+        # Only run this step if the environment is "dev"
+        if: ${{ inputs.ENVIRONMENT == 'dev' }}
+        uses: aws-actions/configure-aws-credentials@v1-node16
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_DEV }}:role/${{ inputs.GHA_ROLE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
       - name: STAGE Configure AWS credentials
         # Only run this step if the environment is "stage"
         if: ${{ inputs.ENVIRONMENT == 'stage' }}
@@ -51,3 +59,6 @@ jobs:
 
       - name: Sync S3 content
         run: aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" 
+
+      - name: Invalidate cache
+        run: aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/cdnsite-id" --query 'Parameter.Value' --output text) --paths "/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}')/*"
