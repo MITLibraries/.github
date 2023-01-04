@@ -16,6 +16,9 @@ on:
       S3URI:
         required: true
         type: string
+      SYNC_PARAMS:
+        required: false
+        type: string
 
 # Set defaults
 defaults:
@@ -58,7 +61,12 @@ jobs:
           aws-region: ${{ inputs.AWS_REGION }}
 
       - name: Sync S3 content
-        run: aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" 
+        run: |
+          if [ '${{ inputs.SYNC_PARAMS }}' != '' ]; then
+            aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" ${{ inputs.SYNC_PARAMS }}
+          else
+            aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore"
+          fi
 
       - name: Invalidate cache
         run: aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/cdnsite-id" --query 'Parameter.Value' --output text) --paths "/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}')/*"

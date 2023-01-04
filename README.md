@@ -169,4 +169,8 @@ The following values must be passed in to the shared workflow from the caller wo
 - `ENVIRONMENT`: either `stage` or `prod` (this workflow is not intended for the `dev` environment)
 - `S3URI`: the full S3 URI (including the path) where the files should be uploaded
 
+There is one optional `with:` argument:
+
+- `SYNC_PARAMS`: this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, it is ignored. This is intended to be used for adding additional `--exclude` arguments for any other files/folders in the web content repo that shouldn't be published to the S3 bucket for the site.
+
 To make life easy for the web devs, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow and stores it as a Terraform output in TfCloud.
