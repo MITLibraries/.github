@@ -16,7 +16,7 @@ on:
       S3URI:
         required: true
         type: string
-      EXCLUDE:
+      SYNC_PARAMS:
         required: false
         type: string
 
@@ -62,8 +62,8 @@ jobs:
 
       - name: Sync S3 content
         run: |
-          if [ '${{ inputs.EXCLUDE }}' != '' ]; then
-            aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" --exclude "${{ inputs.EXCLUDE }}"
+          if [ '${{ inputs.SYNC_PARAMS }}' != '' ]; then
+            aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" ${{ inputs.SYNC_PARAMS }}
           else
             aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore"
           fi
