@@ -16,6 +16,10 @@ on:
       S3URI:
         required: true
         type: string
+      DOMAIN:
+        required: false
+        type: string
+        default: standard
       SYNC_PARAMS:
         required: false
         type: string
@@ -60,13 +64,64 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}
 
-      - name: Sync S3 content
+      - name: Sync custom domain CDN S3 content
+        # Only run this step if this is custom domain content (e.g., a folder at the root of bucket)
+        if: ${{ inputs.DOMAIN == 'custom' }}
         run: |
           if [ '${{ inputs.SYNC_PARAMS }}' != '' ]; then
             aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" ${{ inputs.SYNC_PARAMS }}
           else
             aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore"
           fi
+          echo "Content is synchronized to ${{ inputs.S3URI }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Sync standard CDN S3 content
+        # Only run this step if this is standard content (e.g., a subfolder of the cdn/ folder)
+        if: ${{ inputs.DOMAIN == 'standard' }}
+        run: |
+          if [ '${{ inputs.SYNC_PARAMS }}' != '' ]; then
+            aws s3 sync ./$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" ${{ inputs.SYNC_PARAMS }}
+          else
+            aws s3 sync ./$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore"
+          fi
+          echo "Content is synchronized to ${{ inputs.S3URI }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Invalidate cache
-        run: aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/cdnsite-id" --query 'Parameter.Value' --output text) --paths "/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}')/*"
+        run: |
+          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
+            aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/custom-cdn-id" --query 'Parameter.Value' --output text) --paths "/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}')/*"
+            echo "The cache for the $(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}') site has been cleared." >> $GITHUB_STEP_SUMMARY
+          else
+            aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/standard-cdn-id" --query 'Parameter.Value' --output text) --paths "/*"
+            echo "The cache for the $(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') folder has been cleared." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Generate DEV Summary
+        # Only run this step if the environment is "dev"
+        if: ${{ inputs.ENVIRONMENT == 'dev' }}
+        run: |
+          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
+            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').dev1.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "The updates to https://cdn.dev1.mitlibrary.net/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Generate STAGE Summary
+        # Only run this step if the environment is "dev"
+        if: ${{ inputs.ENVIRONMENT == 'stage' }}
+        run: |
+          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
+            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').stage.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "The updates to https://cdn.stage.mitlibrary.net/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Generate PROD Summary
+        # Only run this step if the environment is "dev"
+        if: ${{ inputs.ENVIRONMENT == 'prod' }}
+        run: |
+          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
+            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').libraries.mit.edu site are now available" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "The updates to https://cdn.libraries.mit.edu/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
+          fi
