@@ -88,40 +88,40 @@ jobs:
 
       - name: Invalidate cache
         run: |
-          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
-            aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/custom-cdn-id" --query 'Parameter.Value' --output text) --paths "/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}')/*"
-            echo "The cache for the $(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}') site has been cleared." >> $GITHUB_STEP_SUMMARY
-          else
+          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
             aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/standard-cdn-id" --query 'Parameter.Value' --output text) --paths "/*"
             echo "The cache for the $(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') folder has been cleared." >> $GITHUB_STEP_SUMMARY
+          else
+            aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/custom-cdn-id" --query 'Parameter.Value' --output text) --paths "/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}')/*"
+            echo "The cache for the $(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}') site has been cleared." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Generate DEV Summary
         # Only run this step if the environment is "dev"
         if: ${{ inputs.ENVIRONMENT == 'dev' }}
         run: |
-          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
-            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').dev1.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
-          else
+          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
             echo "The updates to https://cdn.dev1.mitlibrary.net/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').dev1.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Generate STAGE Summary
-        # Only run this step if the environment is "dev"
+        # Only run this step if the environment is "stage"
         if: ${{ inputs.ENVIRONMENT == 'stage' }}
         run: |
-          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
-            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').stage.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
-          else
+          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
             echo "The updates to https://cdn.stage.mitlibrary.net/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').stage.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Generate PROD Summary
-        # Only run this step if the environment is "dev"
+        # Only run this step if the environment is "prod"
         if: ${{ inputs.ENVIRONMENT == 'prod' }}
         run: |
-          if [ '${{ inputs.DOMAIN }}' != 'standard' ]; then
-            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').libraries.mit.edu site are now available" >> $GITHUB_STEP_SUMMARY
-          else
+          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
             echo "The updates to https://cdn.libraries.mit.edu/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').libraries.mit.edu site are now available" >> $GITHUB_STEP_SUMMARY
           fi
