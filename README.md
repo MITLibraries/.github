@@ -158,7 +158,14 @@ It also depends on the appropriate infrastructure in place, particularly the OID
 
 ## Automated Publishing to CDN
 
-There are at least two static HTML repositories (future-of-libraries and open-access-task-force) that will benefit from automated publishing to the S3-based CDN in our AWS Organization. The publishing automation (for both stage & prod) is handled by one shared workflow, [cdn-shared-publish.yml](./.github/workflows/cdn-shared-publish.yml).
+There are multiple static HTML repositories (future-of-libraries and open-access-task-force) that will benefit from automated publishing to the S3-based CDN in our AWS Organization. The publishing automation (for both stage & prod) is handled by one shared workflow, [cdn-shared-publish.yml](./.github/workflows/cdn-shared-publish.yml), that covers all three tiers (dev/stage/prod) as well as both the standard CDN and the custom domain CDN.
+
+This workflow assumes that the calling repository is structured in a very particular way!
+
+- For custom domain repos, all the content to be published to the `<folder_name>` folder in the S3 bucket **must** live at the root of the repository.
+- For standard domain repos, all the content to be published to the `cdn/<folder_name>` folder in the S3 bucket **must** live in a top level folder named `<folder_name>`. 
+  - For a custom domain example see [future-of-libraries-static](https://github.com/mitlibraries/future-of-libraries-static).
+  - For a standard CDN example see [web-images-static](https://github.com/mitlibraries/web-images-static).
 
 ### Requirements
 
@@ -169,8 +176,15 @@ The following values must be passed in to the shared workflow from the caller wo
 - `ENVIRONMENT`: either `stage` or `prod` (this workflow is not intended for the `dev` environment)
 - `S3URI`: the full S3 URI (including the path) where the files should be uploaded
 
-There is one optional `with:` argument:
+There are two optional `with:` arguments:
 
+- `DOMAIN`: the default value is `standard` which refers to the standard CDN. If the content in question is associated with the custom domain CDN, then the caller workflow must pass the value `custom` instead of relying on the default.
 - `SYNC_PARAMS`: this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, it is ignored. This is intended to be used for adding additional `--exclude` arguments for any other files/folders in the web content repo that shouldn't be published to the S3 bucket for the site.
+  - The typical use for the web dev is to exclude additional top level folders (e.g., `--exclude "docs/*"`) or exclude the top level README (`--exclude "README.md"`).
+  - It **can** be used to exclude everything except for one top level folder (e.g., `--exclude "*" --include "use_only_this_folder/*"`).
+  - for more details on the additional parameters that can be used for `SYNC_PARAMS` see
+    - [AWS CLI s3 reference](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/s3/index.html)
+    - [AWS CLI s3 sync reference](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/s3/sync.html)
+  - The fixed behavior of this workflow is to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory.
 
-To make life easy for the web devs, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow and stores it as a Terraform output in TfCloud.
+To make life easy for the web devs, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
