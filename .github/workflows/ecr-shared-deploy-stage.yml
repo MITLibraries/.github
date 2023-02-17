@@ -63,7 +63,6 @@ jobs:
         uses: actions/setup-python@v4
         with:
           architecture: x64
-          cache: 'pipenv'
 
       - name: Get Ruby
         # Run the Ruby setup setup only when there is a .ruby-version file in the 
