@@ -63,7 +63,7 @@ jobs:
           docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`echo ${{ env.tag_release }}`
 
       - name: Configure AWS credentials for Prod
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v1-node16
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE_PROD }}
           aws-region: ${{ env.AWS_REGION }}
