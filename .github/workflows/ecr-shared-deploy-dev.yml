@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Check for Python or Ruby
         # Check for the existence of files that set either the Python version or the Ruby version
