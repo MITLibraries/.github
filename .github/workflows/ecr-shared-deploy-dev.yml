@@ -79,7 +79,7 @@ jobs:
         # Run the Python setup only when there is a .python-version file in the root
         # of the repository. Otherwise, this step is skipped.
         if: ${{ env.python_repo == 1 }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           architecture: x64
 
