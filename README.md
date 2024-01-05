@@ -188,3 +188,19 @@ There are two optional `with:` arguments:
   - The fixed behavior of this workflow is to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory.
 
 To make life easy for the web devs, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
+
+## Automated Lambda@Edge Deployments
+
+There are multiple Lambda@Edge functions in our CloudFront distributions. The Lambda update & deployment as well as the CloudFront re-deployment (via Terraform) are centralized here to make it easier to add additional Lambda functions in the future. See [cf-lambda-deploy.yml](./.github/workflows/cf-lambda-shared-deploy.yml) for the actual workflow. See [Lambda@Edge CloudFront Deployment Model](https://mitlibraries.atlassian.net/l/cp/SP3QNj1s) for an overview of the deployment process.
+
+### Requirements
+
+- `AWS_REGION`: The region where the S3 bucket lives
+- `GHA_ROLE`: The OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
+- `ENVIRONMENT`: One of `dev`, `stage`, or `prod`
+- `UPLOAD_ZIP` (*boolean*): A flag determining whether the zip and upload job should execute or not
+- `ZIP_FILE_NAME`: The name (without any extentsion) of the file that will appear in S3 shared-files bucket
+- `TF_WORKSPACE`: The name of the Terraform Cloud Workspace to which GHA should connect
+- `TF_AUTO_APPLY` (*boolean*): A boolean for whether the triggered plan should also be auto-applied (defaults to `false`)
+
+To make life easy for the application developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the Lambda application repos and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the app to be deployed to the CloudFront distribution.
