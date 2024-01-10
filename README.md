@@ -195,12 +195,15 @@ There are multiple Lambda@Edge functions in our CloudFront distributions. The La
 
 ### Requirements
 
-- `AWS_REGION`: The region where the S3 bucket lives
-- `GHA_ROLE`: The OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
-- `ENVIRONMENT`: One of `dev`, `stage`, or `prod`
-- `UPLOAD_ZIP` (*boolean*): A flag determining whether the zip and upload job should execute or not
-- `ZIP_FILE_NAME`: The name (without any extentsion) of the file that will appear in S3 shared-files bucket
-- `TF_WORKSPACE`: The name of the Terraform Cloud Workspace to which GHA should connect
-- `TF_AUTO_APPLY` (*boolean*): A boolean for whether the triggered plan should also be auto-applied (defaults to `false`)
+(in alphabetical order)
+
+- `AWS_REGION` (*string*, **required**): The region where the S3 bucket lives
+- `ENVIRONMENT` (*string*, **required**): One of `dev`, `stage`, or `prod`
+- `GHA_ROLE` (*string*, **required**): The OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
+- `TF_AUTO_APPLY` (*boolean*, **optional**): (default == `false`) A boolean for whether the triggered plan should also be auto-applied. Setting this to `true` means that the TfC plan, if successful, will be automatically applied with no human interaction.
+- `TF_WORKSPACE` (*string*, **required**): The name of the Terraform Cloud Workspace to which GHA should connect
+- `UPLOAD_ZIP` (*boolean*, **optional**): (default == `false`) A flag determining whether the zip and upload job should execute or not. Setting this to `true` will force the application packaging and upload to S3 to happen before re-applying the Terraform code in TfC.
+
+**Note**: There is a hard dependency on the caller repo having a `Makefile` and having both `create-zip` and `upload-zip` as `make` commands for this workflow to function properly.
 
 To make life easy for the application developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the Lambda application repos and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the app to be deployed to the CloudFront distribution.

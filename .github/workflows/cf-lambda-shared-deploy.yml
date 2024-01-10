@@ -8,24 +8,20 @@ on:
       AWS_REGION:
         required: true
         type: string
-      GHA_ROLE:
-        required: true
-        type: string
       ENVIRONMENT:
         required: true
         type: string
-      UPLOAD_ZIP:
-        required: false
-        type: boolean
-        default: false
-      ZIP_FILE_NAME:
-        required: false
-        type: string
-        default: some_file_name
-      TF_WORKSPACE:
+      GHA_ROLE:
         required: true
         type: string
       TF_AUTO_APPLY:
+        required: false
+        type: boolean
+        default: false
+      TF_WORKSPACE:
+        required: true
+        type: string
+      UPLOAD_ZIP:
         required: false
         type: boolean
         default: false
@@ -36,9 +32,7 @@ defaults:
     shell: bash
 
 ## Add shared Environment Variables across jobs here ##
-env:
-  TF_CLOUD_ORGANIZATION: "${{ vars.TF_CLOUD_ORGANIZATION }}"
-  TF_API_TOKEN: "${{ secrets.TF_API_TOKEN }}"
+
 
 jobs:
   upload-zip:
@@ -46,7 +40,6 @@ jobs:
     if: ${{ inputs.UPLOAD_ZIP && github.triggering_actor != 'dependabot[bot]' }}
     name: Zip code and upload to S3
     runs-on: ubuntu-latest
-    # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
     permissions:
       id-token: write
       contents: read
@@ -77,24 +70,29 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}
-      
-      # Then we actually zip the file and upload it to the shared-files folder
-      - name: Zip files
-        run: zip -j ${{ inputs.ZIP_FILE_NAME }}.py.zip lambdas/*
+
+      # Create the zip per the Makefile create-zip command
+      - name: Package code into Zip
+        run: make create-zip
+
+      # Upload the .zip per the Makefile upload-zip command
       - name: Upload zip file
-        run: aws s3api put-object --bucket shared-files-$(aws sts get-caller-identity --query Account --output text) --body ${{ inputs.ZIP_FILE_NAME }}.py.zip --key files/${{ inputs.ZIP_FILE_NAME }}.py.zip
+        run: make upload-zip
 
   terraform-cloud-plan-apply:
     needs: upload-zip
+    env:
+      TF_CLOUD_ORGANIZATION: "${{ vars.TF_CLOUD_ORGANIZATION }}"
+      TF_API_TOKEN: "${{ secrets.TF_API_TOKEN }}"
     # Only run if the caller workflow is NOT from dependabot, and wait until the previous job is either completed or skipped
     if: ${{ github.triggering_actor != 'dependabot[bot]' && always() && !failure() && !cancelled() }}
-    name: Terraform Cloud Plan and maybe Apply
+    name: TfC Plan and (maybe) Apply
     runs-on: ubuntu-latest
     steps:
       - uses: hashicorp/tfc-workflows-github/actions/create-run@v1.1.1
         id: plan
         with:
-          message: "Triggered from Lambda application repo"
+          message: "Triggered from ${{ github.repository }}"
           workspace: ${{ inputs.TF_WORKSPACE }}
 
       - uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.1.1
