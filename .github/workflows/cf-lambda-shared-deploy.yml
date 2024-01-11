@@ -46,7 +46,7 @@ jobs:
 
     steps:
       # First we authenticate to AWS account, based on the ENVIRONMENT input
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: DEV Configure AWS credentials
         # Only run this step if the environment is "dev"
         if: ${{ inputs.ENVIRONMENT == 'dev' }}
