@@ -1,0 +1,103 @@
+# Shared workflow for publishing Lambda@Edge functions to
+# CloudFront distributions
+name: Zip Lambda and Redeploy Distribution
+
+on:
+  workflow_call:
+    inputs:
+      AWS_REGION:
+        required: true
+        type: string
+      ENVIRONMENT:
+        required: true
+        type: string
+      GHA_ROLE:
+        required: true
+        type: string
+      TF_AUTO_APPLY:
+        required: false
+        type: boolean
+        default: false
+      TF_WORKSPACE:
+        required: true
+        type: string
+      UPLOAD_ZIP:
+        required: false
+        type: boolean
+        default: false
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+## Add shared Environment Variables across jobs here ##
+
+
+jobs:
+  upload-zip:
+    # Only run if the caller workflow set UPLOAD_ZIP to `true` and the call is NOT from dependabot
+    if: ${{ inputs.UPLOAD_ZIP && github.triggering_actor != 'dependabot[bot]' }}
+    name: Zip code and upload to S3
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # First we authenticate to AWS account, based on the ENVIRONMENT input
+      - uses: actions/checkout@v3
+      - name: DEV Configure AWS credentials
+        # Only run this step if the environment is "dev"
+        if: ${{ inputs.ENVIRONMENT == 'dev' }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_DEV }}:role/${{ inputs.GHA_ROLE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: STAGE Configure AWS credentials
+        # Only run this step if the environment is "stage"
+        if: ${{ inputs.ENVIRONMENT == 'stage' }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+    
+      - name: PROD Configure AWS credentials
+        # Only run this step if the environment is "prod"
+        if: ${{ inputs.ENVIRONMENT == 'prod' }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      # Create the zip per the Makefile create-zip command
+      - name: Package code into Zip
+        run: make create-zip
+
+      # Upload the .zip per the Makefile upload-zip command
+      - name: Upload zip file
+        run: make upload-zip
+
+  terraform-cloud-plan-apply:
+    needs: upload-zip
+    env:
+      TF_CLOUD_ORGANIZATION: "${{ vars.TF_CLOUD_ORGANIZATION }}"
+      TF_API_TOKEN: "${{ secrets.TF_API_TOKEN }}"
+    # Only run if the caller workflow is NOT from dependabot, and wait until the previous job is either completed or skipped
+    if: ${{ github.triggering_actor != 'dependabot[bot]' && always() && !failure() && !cancelled() }}
+    name: TfC Plan and (maybe) Apply
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hashicorp/tfc-workflows-github/actions/create-run@v1.1.1
+        id: plan
+        with:
+          message: "Triggered from ${{ github.repository }}"
+          workspace: ${{ inputs.TF_WORKSPACE }}
+
+      - uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.1.1
+        id: apply
+        if: ${{ fromJSON(steps.plan.outputs.payload).data.attributes.actions.IsConfirmable && inputs.TF_AUTO_APPLY }}
+        with:
+          run: ${{ steps.plan.outputs.run_id }}
+          comment: "Apply Run from GitHub Actions CI ${{ github.sha }}"
