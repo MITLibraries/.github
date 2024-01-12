@@ -38,12 +38,12 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: DEV Configure AWS credentials
         # Only run this step if the environment is "dev"
         if: ${{ inputs.ENVIRONMENT == 'dev' }}
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_DEV }}:role/${{ inputs.GHA_ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}
@@ -51,7 +51,7 @@ jobs:
       - name: STAGE Configure AWS credentials
         # Only run this step if the environment is "stage"
         if: ${{ inputs.ENVIRONMENT == 'stage' }}
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}
@@ -59,7 +59,7 @@ jobs:
       - name: PROD Configure AWS credentials
         # Only run this step if the environment is "prod"
         if: ${{ inputs.ENVIRONMENT == 'prod' }}
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}

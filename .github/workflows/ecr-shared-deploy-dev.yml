@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Check for Python or Ruby
         # Check for the existence of files that set either the Python version or the Ruby version
@@ -53,7 +53,7 @@ jobs:
           fi
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_DEV }}:role/${{ inputs.GHA_ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}

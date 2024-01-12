@@ -72,9 +72,9 @@ All these shared workflows have `tf-` as a prefix.
 
 There are three workflows associated with publishing Docker containers. **Note**: The automated workflows deploy the updated container to the ECR repository, but the workflows **do not** force a container-based service to restart!
 
-- For build/push/update of Docker container in dev: [ecr-shared-deploy-dev.yml](.github/workflows/fargate-shared-deploy-dev.yml)
-- For build/push/update of Docker container in stage: [ecr-shared-deploy-stage.yml](.github/workflows/fargate-shared-deploy-stage.yml)
-- For promoting container to prod: [ecr-shared-promote-prod.yml](.github/workflows/fargate-shared-promote-prod.yml)
+- For build/push/update of Docker container in dev (either for ECS or for Lambda): [ecr-shared-deploy-dev.yml](.github/workflows/ecr-shared-deploy-dev.yml)
+- For build/push/update of Docker container in stage (either for ECS or for Lambda): [ecr-shared-deploy-stage.yml](.github/workflows/ecr-shared-deploy-stage.yml)
+- For promoting container to prod (either for ECS or for Lambda): [ecr-shared-promote-prod.yml](.github/workflows/ecr-shared-promote-prod.yml)
 
 The workflows include checks for the type of container to be built and can handle
 
