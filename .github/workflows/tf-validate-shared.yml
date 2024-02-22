@@ -9,7 +9,7 @@ defaults:
 
 jobs:
   validate-terraform:
-    name: Check with a terraform fmt
+    name: terraform fmt & validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

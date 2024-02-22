@@ -1,0 +1,25 @@
+# This action runs depends on configured pre-commit settings in
+# the caller workflow. It runs just one hook: terraform-docs and
+# passes if there are no changes or fails if it detects changes
+# to write to the README files. This should always pass if the 
+# developer of the caller repo is using the pre-commit hooks.
+
+name: Check terraform-docs
+
+on:
+  workflow_call:
+
+jobs:
+  docs:
+    name: terraform-docs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.ref }}
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - uses: pre-commit/action@v3.0.1
+      with:
+        extra_args: terraform-docs-go --all-files
