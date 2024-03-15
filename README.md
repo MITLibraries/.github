@@ -62,11 +62,11 @@ If you don't want to use the Starter Workflow to add this Action, it is still a 
 
 Since we use a template repo for all our Terraform repos, we don't need starter templates. But, we can definitely use shared workflows! There are three workflows in [`.github/workflows`](./.github/workflows) that are used in all of our Terraform repos:
 
-- `terraform validate`: we always validate the Terraform code
-- `checkov`: we always run a security check on the Terraform code
-- `terraform-docs`: we automatically update the `README.md` with the output from the `terraform-docs` command
+- `tf-validate-shared.yml`: we always validate the Terraform code
+- `tf-checkov-shared.yml`: we always run a security check on the Terraform code
+- `tf-docs-shared.yml`: we always validate that the `README.md` files have the output from the `terraform-docs` command
 
-All these shared workflows have `tf-` as a prefix.
+The `tf-docs-gen-shared.yml` workflow is deprecated and is replaced by `tf-docs-shared.yml`.
 
 ## Build and Publish Containers
 
@@ -154,7 +154,7 @@ The container that is pushed to the AWS ECR Repository in Prod is tagged with
 
 ### Additional Requirements/Dependencies
 
-It also depends on the appropriate infrastructure in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS. In most cases, this is handled by the [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) repository (which also generates the GHA workflow files for each ECR repository).
+It also assumes that the appropriate infrastructure is in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS. In most cases, this is handled by the [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) repository. That same repository generates the GHA workflow files for each ECR repository so that they can be copied from Terraform Cloud into the application repository.
 
 ## Automated Publishing to CDN
 
@@ -171,23 +171,20 @@ This workflow assumes that the calling repository is structured in a very partic
 
 The following values must be passed in to the shared workflow from the caller workflow:
 
-- `AWS_REGION`: the region where the S3 bucket lives
-- `GHA_ROLE`: the OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
-- `ENVIRONMENT`: either `stage` or `prod` (this workflow is not intended for the `dev` environment)
-- `S3URI`: the full S3 URI (including the path) where the files should be uploaded
-
-There are two optional `with:` arguments:
-
-- `DOMAIN`: the default value is `standard` which refers to the standard CDN. If the content in question is associated with the custom domain CDN, then the caller workflow must pass the value `custom` instead of relying on the default.
-- `SYNC_PARAMS`: this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, it is ignored. This is intended to be used for adding additional `--exclude` arguments for any other files/folders in the web content repo that shouldn't be published to the S3 bucket for the site.
+- `AWS_REGION` (*string*, **required**): the region where the S3 bucket lives
+- `DOMAIN` (*string*, **optional**): the default value is `standard` which refers to the standard CDN. If the content in question is associated with the custom domain CDN, then the caller workflow must pass the value `custom` instead of relying on the default.
+- `ENVIRONMENT` (*string*, **required**): either `stage` or `prod` (this workflow is not intended for the `dev` environment)
+- `GHA_ROLE` (*string*, **required**): the OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
+- `SYNC_PARAMS` (*string*, **optional**): this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, it is ignored. This is intended to be used for adding additional `--exclude` arguments for any other files/folders in the web content repo that shouldn't be published to the S3 bucket for the site.
   - The typical use for the web dev is to exclude additional top level folders (e.g., `--exclude "docs/*"`) or exclude the top level README (`--exclude "README.md"`).
   - It **can** be used to exclude everything except for one top level folder (e.g., `--exclude "*" --include "use_only_this_folder/*"`).
   - for more details on the additional parameters that can be used for `SYNC_PARAMS` see
     - [AWS CLI s3 reference](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/s3/index.html)
     - [AWS CLI s3 sync reference](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/s3/sync.html)
   - The fixed behavior of this workflow is to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory.
+- `S3URI` (*string*, **required**): the full S3 URI (including the path) where the files should be uploaded
 
-To make life easy for the web devs, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
+To make life easy for the web developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
 
 ## Automated Lambda@Edge Deployments
 
@@ -195,7 +192,7 @@ There are multiple Lambda@Edge functions in our CloudFront distributions. The La
 
 ### Requirements
 
-(in alphabetical order)
+The following values (alphabetical order) must be passed in to the shared workflow from the caller workflow:
 
 - `AWS_REGION` (*string*, **required**): The region where the S3 bucket lives
 - `ENVIRONMENT` (*string*, **required**): One of `dev`, `stage`, or `prod`
@@ -203,6 +200,11 @@ There are multiple Lambda@Edge functions in our CloudFront distributions. The La
 - `TF_AUTO_APPLY` (*boolean*, **optional**): (default == `false`) A boolean for whether the triggered plan should also be auto-applied. Setting this to `true` means that the TfC plan, if successful, will be automatically applied with no human interaction.
 - `TF_WORKSPACE` (*string*, **required**): The name of the Terraform Cloud Workspace to which GHA should connect
 - `UPLOAD_ZIP` (*boolean*, **optional**): (default == `false`) A flag determining whether the zip and upload job should execute or not. Setting this to `true` will force the application packaging and upload to S3 to happen before re-applying the Terraform code in TfC.
+
+The following values must be set in the repository that calls this shared workflow:
+
+- `TF_API_TOKEN` **Repository Secret**: This is the lib-gh-tfc user token stored in LastPass.
+- `TF_CLOUD_ORGANIZATION` **Repository Variable**: This is the name of our Terraform Cloud Organization (`MITLibraries`).
 
 **Note**: There is a hard dependency on the caller repo having a `Makefile` and having both `create-zip` and `upload-zip` as `make` commands for this workflow to function properly.
 
