@@ -128,6 +128,14 @@ The container that is pushed to the AWS ECR Repository in Stage-Workloads is tag
 
 The automated deploys to dev & stage actually build the container through GitHub Actions. The promote to prod workflow just copies the container from stage to prod to ensure that there is no difference at all in what is deployed.
 
+The caller workflows for this shared workflow are configured with `on.workflow_dispatch` and `on.release.types: [published]`. The former is for manual deploys from the GitHub UI and the latter is for deploying to production when a new release tag is issued. But, we want to ensure that only tagged releases on the `main` branch of the calling repository will trigger a run (we don't want a published tag on a feature branch to unintentionally push something to Production). So, we add a conditional for the `job.deploy` that checks the calling branch:
+
+```yaml
+    if: ${{ github.ref == 'refs/heads/main' || github.event.release.target_commitish == 'main' }}
+```
+
+The `github.ref` value gets set when the trigger is a release tag. The `github.event.release.target_commitish` value gets set when the trigger is `workflow_dispatch`.
+
 A sample caller workflow would look like
 
 ```yaml
