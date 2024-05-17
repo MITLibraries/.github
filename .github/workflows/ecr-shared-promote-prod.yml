@@ -23,6 +23,8 @@ on:
         required: false
         type: string
 
+permissions: read-all
+
 # Set defaults
 defaults:
   run:
@@ -30,6 +32,7 @@ defaults:
 
 jobs:
   deploy:
+    if: ${{ github.ref == 'refs/heads/main' || github.event.release.target_commitish == 'main' }}
     name: Promote Build to Prod
     # Download from Stage then upload to Prod
     runs-on: ubuntu-latest
