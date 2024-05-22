@@ -50,14 +50,29 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE_STAGE }}
           aws-region: ${{ inputs.AWS_REGION }}
 
+      - name: Check SHAs
+        id: check_sha
+        run: |
+          export HEAD_SHA=$(git rev-parse --short=8 HEAD)
+          export ECR_SHA=$(aws ecr describe-images --repository-name ${{ inputs.ECR_STAGE }} --image-ids imageTag=latest --query 'imageDetails[].imageTags' | sed -E 's/[^a-zA-Z0-9]/\n/g' | grep -E '^[a-f0-9]{8}$')
+          if [[ $HEAD_SHA == $ECR_SHA ]]; then
+            echo "sha_match=true" >> $GITHUB_ENV
+          else
+            echo "sha_match=false" >> $GITHUB_ENV
+            echo "FAILURE: Stage-Workloads SHA did not match the main branch." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
       - name: Create tags
         # Capture the Release tag to attach to the uploaded container in AWS
+        if: ${{ env.sha_match == 'true' }}
         id: tags
         run: |
           echo "tag_sha=$GITHUB_SHA" >> $GITHUB_ENV
           echo "tag_release=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
 
       - name: Download from Stage and re-tag
+        if: ${{ env.sha_match == 'true' }}
         run: |
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker pull ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest
@@ -66,12 +81,14 @@ jobs:
           docker tag ${{ secrets.AWS_ACCT_STAGE }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_STAGE }}:latest ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:`echo ${{ env.tag_release }}`
 
       - name: Configure AWS credentials for Prod
+        if: ${{ env.sha_match == 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE_PROD }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload container to Prod
+        if: ${{ env.sha_match == 'true' }}
         run: |
           docker login -u AWS -p $(aws ecr get-login-password --region ${{ inputs.AWS_REGION }}) ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com
           docker push ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:latest
@@ -80,5 +97,5 @@ jobs:
 
       - name: Update Lambda Function in Prod
         # Only update the Lambda Function if the container is destined for Lambda
-        if: ${{ inputs.FUNCTION != '' }}
+        if: ${{ inputs.FUNCTION != '' && env.sha_match == 'true' }}
         run: aws lambda update-function-code --function-name ${{ inputs.FUNCTION }} --image-uri ${{ secrets.AWS_ACCT_PROD }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/${{ inputs.ECR_PROD }}:latest --query "LastUpdateStatusReasonCode" --output text

@@ -136,6 +136,8 @@ The caller workflows for this shared workflow are configured with `on.workflow_d
 
 The `github.ref` value gets set when the trigger is a release tag. The `github.event.release.target_commitish` value gets set when the trigger is `workflow_dispatch`.
 
+Additionally, we need to ensure that the container in the Stage-Workloads ECR repository is from the merge commit on `main`. (Since it is allowable for a developer to manually run the GitHub Actions Workflow to push a feature branch container to Stage-Workloads, we need to include this verification.) In essence, we are checking that the 8-character SHA tag on the container image in ECR matches the 8-character SHA for the merge commit into `main`.
+
 A sample caller workflow would look like
 
 ```yaml
@@ -156,8 +158,8 @@ There is one optional `with:` argument: `FUNCTION: "${function}"` in the situati
 
 The container that is pushed to the AWS ECR Repository in Prod is tagged with
 
-- the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
-- the release tag
+- the short (8 character) SHA of the tagged merge commit
+- the release tag name
 - the word "latest"
 
 ### Additional Requirements/Dependencies
