@@ -89,13 +89,13 @@ jobs:
     name: TfC Plan and (maybe) Apply
     runs-on: ubuntu-latest
     steps:
-      - uses: hashicorp/tfc-workflows-github/actions/create-run@v1.3.0
+      - uses: hashicorp/tfc-workflows-github/actions/create-run@v1.3.2
         id: plan
         with:
           message: "Triggered from ${{ github.repository }}"
           workspace: ${{ inputs.TF_WORKSPACE }}
 
-      - uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.3.0
+      - uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.3.2
         id: apply
         if: ${{ fromJSON(steps.plan.outputs.payload).data.attributes.actions.IsConfirmable && inputs.TF_AUTO_APPLY }}
         with:
