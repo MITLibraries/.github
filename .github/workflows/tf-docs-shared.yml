@@ -9,6 +9,8 @@ name: Check terraform-docs
 on:
   workflow_call:
 
+permissions: read-all
+
 jobs:
   docs:
     name: terraform-docs

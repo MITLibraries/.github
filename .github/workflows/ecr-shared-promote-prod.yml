@@ -23,7 +23,15 @@ on:
         required: false
         type: string
 
-permissions: read-all
+# The least-privilege list for this GHA to work (the `id-token: write` is
+# necessary for the OIDC authentication) 
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+  id-token: write
+  pull-requests: read
+  statuses: read
 
 # Set defaults
 defaults:
@@ -36,10 +44,6 @@ jobs:
     name: Promote Build to Prod
     # Download from Stage then upload to Prod
     runs-on: ubuntu-latest
-    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
       - uses: actions/checkout@v4

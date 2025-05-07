@@ -7,6 +7,8 @@ defaults:
   run:
     shell: bash
 
+permissions: read-all
+
 jobs:
   validate-terraform:
     name: terraform fmt & validate

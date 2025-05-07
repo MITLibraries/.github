@@ -20,6 +20,16 @@ on:
         required: false
         type: string
 
+# The least-privilege list for this GHA to work (the `id-token: write` is
+# necessary for the OIDC authentication) 
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+  id-token: write
+  pull-requests: read
+  statuses: read
+
 # Set defaults
 defaults:
   run:
@@ -31,11 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
     if: ${{ github.triggering_actor != 'dependabot[bot]' }}
-    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
-    permissions:
-      id-token: write
-      contents: read
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -84,7 +90,7 @@ jobs:
           architecture: x64
 
       - name: Get Ruby
-        # Run the Ruby setup setup only when there is a .ruby-version file in the 
+        # Run the Ruby setup only when there is a .ruby-version file in the 
         # root of the repository. Otherwise, this step is skipped.
         if: ${{ env.ruby_repo == 1 }}
         uses: ruby/setup-ruby@v1
