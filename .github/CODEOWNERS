@@ -1,0 +1,33 @@
+# CODEOWNERS file (from GitHub template at
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
+# Each line is a file pattern followed by one or more owners.
+
+################################################################################
+# These owners will be the default owners for everything in the repo. Unless a
+# later match takes precedence, these users will be requested for review when 
+# someone opens a pull request. This is commented out in favor of the 
+# "Engineering Leads" team (see below).
+# * @cabutlermit @JPrevost
+
+# Teams can be specified as code owners as well. Teams should be identified in
+# the format @org/team-name. Teams must have explicit write access to the 
+# repository.
+* @mitlibraries/engineering-leads
+
+# We can set explicit users or teams for files with particular names or 
+# paths. We start by protecting the CODEOWNERS file by linking it to the two 
+# GitHub Organization owners:
+/.github/CODEOWNERS @mitlibraries/engineering-leads
+
+# The ECR, Terraform, CDN, and CloudFormation workflows are managed by InfraEng:
+/.github/workflows/ecr* @mitlibraries/infraeng
+/.github/workflows/tf* @mitlibraries/infraeng
+/.github/workflows/cdn* @mitlibraries/infraeng
+/.github/workflows/cf* @mitlibraries/infraeng
+
+# The Python publishing workflows are managed by DataEng:
+/.github/workflows/python* @mitlibraries/dataeng
+
+# The Ruby publishing workflows are managed by EngX/engx
+/.github/workflows/ruby* @mitlibraries/engx
+/workflow-templates.* @mitlibraries/engx

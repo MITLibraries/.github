@@ -34,7 +34,7 @@ That's it! Adding the shared workflow should now run the standard tests, code co
 
 You can (optionally) add this using a Starter Workflow by going to Actions in the repository you'd like it added to, and selecting the "MIT Libraries Ruby CI Workflow" which will allow you to open a PR to add this shared workflow.
 
-### Requirements
+### Ruby Requirements
 
 - Add `simplecov` and `simplecov-lcov` to the test section of Gemfile
 - `bundle install`
@@ -60,15 +60,67 @@ If you don't want to use the Starter Workflow to add this Action, it is still a 
 
 ## Terraform
 
-Since we use a template repo for all our Terraform repos, we don't need starter templates. But, we can definitely use shared workflows! There are three workflows in [`.github/workflows`](./.github/workflows) that are used in all of our Terraform repos:
+Since we use a template repo for all our Terraform repos, we don't need starter templates. But, we definitely use shared workflows. There are three workflows in [`.github/workflows`](./.github/workflows) that are used in all of our Terraform repos:
 
 - `tf-validate-shared.yml`: we always validate the Terraform code
 - `tf-checkov-shared.yml`: we always run a security check on the Terraform code
 - `tf-docs-shared.yml`: we always validate that the `README.md` files have the output from the `terraform-docs` command
 
-The `tf-docs-gen-shared.yml` workflow is deprecated and is replaced by `tf-docs-shared.yml`.
+**The `tf-docs-gen-shared.yml` workflow is deprecated and is replaced by `tf-docs-shared.yml`.**
 
-## Build and Publish Containers
+## Multi-Architecture Container Publishing
+
+There are three workflows associated with publishing Docker containers to AWS ECR (while these workflows publish containers to ECR they do **NOT** force ECS services to restart with the new container.) These workflows include an input variable that allows the developer to choose either `linux/amd64` or `linux/arm6` as the CPU architecture for the built container.
+
+- `ecr-multi-arch-deploy-dev.yml`: Build/Publish Docker container in dev (for ECS or Lambda)
+- `ecr-multi-arch-deploy-stage.yml`: Build/Publish Docker container in stage (for ECS or Lambda)
+- `ecr-multi-arch-promote-prod.yml`: Copy Docker container from stage to prod (for ECS or Lambda)
+
+### ecr-multi-arch-deploy-dev.yml & ecr-multi-arch-deploy-stage.yml
+
+These two workflows are the same. They require
+
+- shared secrets that exists in our MITLibraries GitHub Organization.
+- a caller workflow that passes expected values to the shared workflow (see [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) for the Terraform-generated calling workflows)
+
+The container that is pushed to the AWS ECR Repository in Dev1 is tagged with
+
+- the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
+- the PR number for the repo
+- the word "latest"
+
+The container that is pushed to the AWS ECR Repository in Stage-Workloads is tagged with
+
+- the short (8 character) SHA of the merge commit
+- the word "latest"
+
+### ecr-multi-arch-promote-prod.yml
+
+The promote to prod workflow just copies the container from stage to prod to ensure that there is no difference at all in what is deployed.
+
+The caller workflows for this shared workflow are configured with `on.workflow_dispatch` and `on.release.types: [published]`. The former allows for manual deploys from the GitHub UI and the latter is for deploying to production when a new release tag is issued. But, we want to ensure that only tagged releases on the `main` branch of the calling repository will trigger a run (we don't want a published tag on a feature branch to unintentionally push something to Production). So, we add a conditional for the `job.deploy` that checks the calling branch:
+
+```yaml
+    if: ${{ github.ref == 'refs/heads/main' || github.event.release.target_commitish == 'main' }}
+```
+
+The `github.ref` value gets set when the trigger is a release tag. The `github.event.release.target_commitish` value gets set when the trigger is `workflow_dispatch`.
+
+Additionally, we need to ensure that the container in the Stage-Workloads ECR repository is from the merge commit on `main`. (Since it is allowable for a developer to manually run the GitHub Actions Workflow to push a feature branch container to Stage-Workloads, we need to include this verification.) In essence, we are checking that the 8-character SHA tag on the container image in ECR matches the 8-character SHA for the merge commit into `main`.
+
+The container that is pushed to the AWS ECR Repository in Prod is tagged with
+
+- the short (8 character) SHA of the tagged merge commit
+- the release tag name
+- the word "latest"
+
+### Additional Requirements/Dependencies
+
+It also assumes that the appropriate infrastructure is in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS. In most cases, this is handled by the [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) repository. That same repository generates the GHA workflow files for each ECR repository so that they can be copied from Terraform Cloud into the application repository.
+
+## DEPRECATED: Build and Publish Containers
+
+**NOTE: This is deprecated and is being replaced by the preceeding section.**
 
 There are three workflows associated with publishing Docker containers. **Note**: The automated workflows deploy the updated container to the ECR repository, but the workflows **do not** force a container-based service to restart!
 
@@ -82,7 +134,7 @@ The workflows include checks for the type of container to be built and can handl
 - Custom, Python-based containers built by MIT Libraries
 - Custom, Ruby-based containers build by MIT Libraries
 
-### ecr-shared-deploy-dev.yml & ecr-shared-deploy-stage.yml
+### DEPRECATED: ecr-shared-deploy-dev.yml & ecr-shared-deploy-stage.yml
 
 These two workflows are almost exactly the same. They require
 
@@ -124,7 +176,7 @@ The container that is pushed to the AWS ECR Repository in Stage-Workloads is tag
 - the short (8 character) SHA of the merge commit
 - the word "latest"
 
-### ecr-shared-promote-prod.yml
+### DEPRECATED: ecr-shared-promote-prod.yml
 
 The automated deploys to dev & stage actually build the container through GitHub Actions. The promote to prod workflow just copies the container from stage to prod to ensure that there is no difference at all in what is deployed.
 
@@ -162,7 +214,7 @@ The container that is pushed to the AWS ECR Repository in Prod is tagged with
 - the release tag name
 - the word "latest"
 
-### Additional Requirements/Dependencies
+### DEPRECATED: Additional Requirements/Dependencies
 
 It also assumes that the appropriate infrastructure is in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS. In most cases, this is handled by the [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) repository. That same repository generates the GHA workflow files for each ECR repository so that they can be copied from Terraform Cloud into the application repository.
 
@@ -177,7 +229,7 @@ This workflow assumes that the calling repository is structured in a very partic
   - For a custom domain example see [future-of-libraries-static](https://github.com/mitlibraries/future-of-libraries-static).
   - For a standard CDN example see [web-images-static](https://github.com/mitlibraries/web-images-static).
 
-### Requirements
+### CDN Requirements
 
 The following values must be passed in to the shared workflow from the caller workflow:
 
@@ -200,7 +252,7 @@ To make life easy for the web developers, the [mitlib-tf-workloads-libraries-web
 
 There are multiple Lambda@Edge functions in our CloudFront distributions. The Lambda update & deployment as well as the CloudFront re-deployment (via Terraform) are centralized here to make it easier to add additional Lambda functions in the future. See [cf-lambda-deploy.yml](./.github/workflows/cf-lambda-shared-deploy.yml) for the actual workflow. See [Lambda@Edge CloudFront Deployment Model](https://mitlibraries.atlassian.net/l/cp/SP3QNj1s) for an overview of the deployment process.
 
-### Requirements
+### Lambda@Edge Requirements
 
 The following values (alphabetical order) must be passed in to the shared workflow from the caller workflow:
 
