@@ -82,7 +82,9 @@ jobs:
         # Run the Python setup only when there is a .python-version file in the root
         # of the repository. Otherwise, this step is skipped.
         if: ${{ steps.buildcheck.outputs.python_repo == '1' }}
-        uses: actions/setup-python@v5 # by default, this uses the .python-version file to set the version
+        uses: actions/setup-python@v5
+        with: 
+          python-version-file: '.python-version'
 
       - name: Get Ruby
         # Run the Ruby setup setup only when there is a .ruby-version file in the 
@@ -107,7 +109,8 @@ jobs:
           TAG_SHA: ${{ steps.tags.outputs.tag_sha}}
           TAG_PR: ${{ steps.tags.outputs.tag_pr}}
         run: |
-          DOCKER_BUILDKIT=1 docker build --platform ${{ inputs.CPU_ARCH }} \
+          docker buildx create --use
+          DOCKER_BUILDKIT=1 docker buildx build --platform ${{ inputs.CPU_ARCH }} \
             -t $REGISTRY/$REPOSITORY:latest \
             -t $REGISTRY/$REPOSITORY:$TAG_SHA \
             -t $REGISTRY/$REPOSITORY:$TAG_PR .
