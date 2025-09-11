@@ -24,6 +24,7 @@ on:
         required: false
         type: string
 
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
 permissions:
   id-token: write
   contents: read
@@ -37,13 +38,10 @@ jobs:
   deploy:
     if: ${{ github.ref == 'refs/heads/main' || github.event.release.target_commitish == 'main' }}
     name: Promote Build to Prod
-    # Download from Stage then upload to Prod
+    # E.g., download from Stage then upload to Prod
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
       - name: Configure AWS credentials for Stage
         id: login-aws-stage
         uses: aws-actions/configure-aws-credentials@v5
@@ -58,12 +56,13 @@ jobs:
         env:
             REPOSITORY: ${{ inputs.ECR_STAGE }}
         run: |
-          export HEAD_SHA=$(git rev-parse --short=8 HEAD)
           export ECR_SHA=$(aws ecr describe-images --repository-name $REPOSITORY --image-ids imageTag=latest --query 'imageDetails[].imageTags' | sed -E 's/[^a-zA-Z0-9]/\n/g' | grep -E '^[a-f0-9]{8}$')
-          if [[ $HEAD_SHA == $ECR_SHA ]]; then
+          if [[ ${GITHUB_SHA::8} == $ECR_SHA ]]; then
             echo "sha_match=true" >> $GITHUB_OUTPUT
+            echo "#### SHA Match Success" >> $GITHUB_STEP_SUMMARY
           else
             echo "sha_match=false" >> $GITHUB_OUTPUT
+            echo "#### SHA Match Failure" >> $GITHUB_STEP_SUMMARY
             echo "FAILURE: Stage-Workloads SHA did not match the main branch." >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
@@ -80,12 +79,12 @@ jobs:
         id: login-ecr-stage
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Download from Stage and re-tag
+      - name: Download from Stage
         if: ${{ steps.check_sha.outputs.sha_match == 'true' }}
         env:
           REGISTRY: ${{ steps.login-ecr-stage.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR_STAGE }}
-        run: docker pull $REGISTRY/$REPOSITORY:latest
+        run: docker pull ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${GITHUB_SHA::8}
 
       - name: Configure AWS credentials for Prod
         id: login-aws-prod
@@ -98,28 +97,47 @@ jobs:
         id: login-ecr-prod
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Re-tag and Push to PRod
+      - name: Re-tag and Push to Prod
         if: ${{ steps.check_sha.outputs.sha_match == 'true' }}
         env:
           REGISTRY_STAGE: ${{ steps.login-ecr-stage.outputs.registry }}
           REGISTRY_PROD: ${{ steps.login-ecr-prod.outputs.registry }}
-          REPOSITORY: ${{ inputs.ECR_PROD }}
+          REPOSITORY_STAGE: ${{ inputs.ECR_STAGE }}
+          REPOSITORY_PROD: ${{ inputs.ECR_PROD }}
           TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
           TAG_RELEASE: ${{ steps.tags.outputs.tag_release }}
         run: |
-          docker tag $REGISTRY_STAGE/$REPOSITORY:latest $REGISTRY_PROD/$REPOSITORY:latest
-          docker tag $REGISTRY_STAGE/$REPOSITORY:latest $REGISTRY_PROD/$REPOSITORY:$TAG_SHA
-          docker tag $REGISTRY_STAGE/$REPOSITORY:latest $REGISTRY_PROD/$REPOSITORY:$TAG_RELEASE
-          docker push $REGISTRY_PROD/$REPOSITORY:latest
-          docker push $REGISTRY_PROD/$REPOSITORY:$TAG_SHA
-          docker push $REGISTRY_PROD/$REPOSITORY:$TAG_RELEASE
+          docker tag ${{ env.REGISTRY_STAGE }}/${{ env.REPOSITORY_STAGE }}:${GITHUB_SHA::8} ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:latest
+          docker tag ${{ env.REGISTRY_STAGE }}/${{ env.REPOSITORY_STAGE }}:${GITHUB_SHA::8} ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:$TAG_SHA
+          if [ $GITHUB_EVENT_NAME != "workflow_dispatch" ]; then
+            docker tag ${{ env.REGISTRY_STAGE }}/${{ env.REPOSITORY_STAGE }}:${GITHUB_SHA::8} ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:$TAG_RELEASE
+          fi
+            docker push ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:latest
+          docker push ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:$TAG_SHA
+          if [ $GITHUB_EVENT_NAME != "workflow_dispatch" ]; then
+            docker push ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:$TAG_RELEASE
+          fi
+          echo "#### Promote Container to Production" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Promoted image to Prod ECR:" >> $GITHUB_STEP_SUMMARY
+          echo "- latest" >> $GITHUB_STEP_SUMMARY
+          echo "- $TAG_SHA" >> $GITHUB_STEP_SUMMARY
+          if [ $GITHUB_EVENT_NAME != "workflow_dispatch" ]; then
+            echo "- $TAG_RELEASE" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- MANUAL RUN" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Update Lambda Function in Prod
         # Only update the Lambda Function if the container is destined for Lambda
         if: ${{ inputs.FUNCTION != '' && steps.check_sha.outputs.sha_match == 'true' }}
+        env:
+          REGISTRY_PROD: ${{ steps.login-ecr-prod.outputs.registry }}
+          REPOSITORY_PROD: ${{ inputs.ECR_PROD }}
         run: | 
           aws lambda update-function-code \
             --function-name ${{ inputs.FUNCTION }} \
-            --image-uri $REGISTRY_PROD/$REPOSITORY:latest \
+            --image-uri ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:latest \
             --query "LastUpdateStatusReasonCode" \
             --output text
+          echo "#### Lambda Function" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Lambda Function Updated" >> $GITHUB_STEP_SUMMARY
