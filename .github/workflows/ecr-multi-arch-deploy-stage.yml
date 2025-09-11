@@ -29,17 +29,18 @@ defaults:
   run:
     shell: bash
 
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
 permissions:
   id-token: write
   contents: read
 
 jobs:
   deploy:
-    name: Build and Deploy to ECR
-    runs-on: ubuntu-latest
+    name: Build and Deploy to Stage ECR on ${{ inputs.CPU_ARCH }}
+    # Pick a runner that matches the CPU architecture of the container
+    runs-on: ${{ inputs.CPU_ARCH == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest'  }}
     # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
     if: ${{ github.triggering_actor != 'dependabot[bot]' }}
-    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
 
     steps:
       - name: Checkout code
@@ -58,31 +59,20 @@ jobs:
             echo "ruby_repo=1" >> $GITHUB_OUTPUT
           fi
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          aws-region: ${{ inputs.AWS_REGION }}
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
-
       - name: Create tags
         # Extra effort on tagging is necessary because GHA checkout uses a "detached head" 
         id: tags
         run: |
-          if [ $GITHUB_EVENT_NAME = "workflow_dispatch" ]; then
-            TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8) && \
-            TAG_PR=$GITHUB_EVENT_NAME
-          else
-            TAG_SHA=$(echo ${{ github.event.pull_request.head.sha }} | cut -c 1-8) && \
-            TAG_PR=$(echo "PR-"${{ github.event.pull_request.number }})
-          fi
+          TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8)
           echo "tag_sha=${TAG_SHA}" >> $GITHUB_OUTPUT
-          echo "tag_pr=${TAG_PR}" >> $GITHUB_OUTPUT
 
       - name: Get Python
         # Run the Python setup only when there is a .python-version file in the root
         # of the repository. Otherwise, this step is skipped.
         if: ${{ steps.buildcheck.outputs.python_repo == '1' }}
-        uses: actions/setup-python@v5 # by default, this uses the .python-version file to set the version
+        uses: actions/setup-python@v5
+        with: 
+          python-version-file: '.python-version'
 
       - name: Get Ruby
         # Run the Ruby setup setup only when there is a .ruby-version file in the 
@@ -96,31 +86,32 @@ jobs:
         if: ${{ inputs.PREBUILD != '' }} 
         run: ${{ inputs.PREBUILD }}
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build container
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push container
+        uses: docker/build-push-action@v6
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR }}
-          TAG_SHA: ${{ steps.tags.outputs.tag_sha}}
-          TAG_PR: ${{ steps.tags.outputs.tag_pr}}
-        run: |
-          DOCKER_BUILDKIT=1 docker build --platform ${{ inputs.CPU_ARCH }} \
-            -t $REGISTRY/$REPOSITORY:latest \
-            -t $REGISTRY/$REPOSITORY:$TAG_SHA \
-            -t $REGISTRY/$REPOSITORY:$TAG_PR .
-
-      - name: Push container
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          TAG_SHA: ${{ steps.tags.outputs.tag_sha}}
-          TAG_PR: ${{ steps.tags.outputs.tag_pr}}
-        run: |
-          docker push $REGISTRY/$REPOSITORY:latest
-          docker push $REGISTRY/$REPOSITORY:$TAG_SHA
-          docker push $REGISTRY/$REPOSITORY:$TAG_PR
+          TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
+        with:
+          context: .
+          push: true
+          platforms: ${{ inputs.CPU_ARCH }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:latest
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }}
 
       - name: Update Lambda Function
         env:
@@ -131,5 +122,5 @@ jobs:
         run: |
           aws lambda update-function-code \ 
             --function-name ${{ inputs.FUNCTION }} \
-            --image-uri $REGISTRY/$REPOSITORY:latest \
+            --image-uri ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:latest \
             --query "LastUpdateStatusReasonCode" --output text

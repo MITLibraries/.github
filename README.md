@@ -94,6 +94,8 @@ The container that is pushed to the AWS ECR Repository in Stage-Workloads is tag
 - the short (8 character) SHA of the merge commit
 - the word "latest"
 
+The workflow requires a `CPU_ARCH` input. This is used to pick the GitHub-hosted runner architecture for the whole job and then it is used during the Docker build step to build the container for the correct architecture. See [partner-runner-images](https://github.com/actions/partner-runner-images?tab=readme-ov-file) for information related to `ARM64` based hosted runners.
+
 ### ecr-multi-arch-promote-prod.yml
 
 The promote to prod workflow just copies the container from stage to prod to ensure that there is no difference at all in what is deployed.

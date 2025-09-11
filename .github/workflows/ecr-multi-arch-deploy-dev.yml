@@ -29,6 +29,7 @@ defaults:
   run:
     shell: bash
 
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
 permissions:
   id-token: write
   contents: read
@@ -36,10 +37,10 @@ permissions:
 jobs:
   deploy:
     name: Build and Deploy to Dev1 ECR on ${{ inputs.CPU_ARCH }}
-    runs-on: ${{ inputs.CPU_ARCH == 'linux/arm64' && 'ubuntu-22.04-arm' || 'ubuntu-latest'  }}
+    # Pick a runner that matches the CPU architecture of the container
+    runs-on: ${{ inputs.CPU_ARCH == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest'  }}
     # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
     if: ${{ github.triggering_actor != 'dependabot[bot]' }}
-    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
 
     steps:
       - name: Checkout code
