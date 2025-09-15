@@ -63,12 +63,18 @@ jobs:
         # Extra effort on tagging is necessary because GHA checkout uses a "detached head" 
         id: tags
         run: |
+          CLEANED_ARCH=$(echo ${{ inputs.CPU_ARCH }} | cut -d'/' -f2)
           if [ $GITHUB_EVENT_NAME = "workflow_dispatch" ]; then
             TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8) && \
             TAG_PR=$GITHUB_EVENT_NAME
           else
             TAG_SHA=$(echo ${{ github.event.pull_request.head.sha }} | cut -c 1-8) && \
             TAG_PR=$(echo "PR-"${{ github.event.pull_request.number }})
+          fi
+          if [[ -f ".aws-architecture" ]]; then
+            echo "tag_latest=latest-${CLEANED_ARCH}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_latest=latest" >> $GITHUB_OUTPUT
           fi
           echo "tag_sha=${TAG_SHA}" >> $GITHUB_OUTPUT
           echo "tag_pr=${TAG_PR}" >> $GITHUB_OUTPUT
@@ -111,14 +117,15 @@ jobs:
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR }}
-          TAG_SHA: ${{ steps.tags.outputs.tag_sha}}
-          TAG_PR: ${{ steps.tags.outputs.tag_pr}}
+          TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
+          TAG_PR: ${{ steps.tags.outputs.tag_pr }}
+          TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
         with:
           context: .
           push: true
           platforms: ${{ inputs.CPU_ARCH }}
           tags: |
-            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:latest
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }}
             ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }}
             ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_PR }}
 
