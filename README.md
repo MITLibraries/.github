@@ -68,33 +68,39 @@ Since we use a template repo for all our Terraform repos, we don't need starter 
 
 **The `tf-docs-gen-shared.yml` workflow is deprecated and is replaced by `tf-docs-shared.yml`.**
 
-## Multi-Architecture Container Publishing
+## Deploying Containers to AWS ECR
 
-There are three workflows associated with publishing Docker containers to AWS ECR (while these workflows publish containers to ECR they do **NOT** force ECS services to restart with the new container.) These workflows include an input variable that allows the developer to choose either `linux/amd64` or `linux/arm6` as the CPU architecture for the built container.
+There are three workflows associated with publishing Docker containers to AWS ECR.
+
+**Note**: *While these workflows publish containers to ECR they do ***NOT*** force ECS services to restart with the new container.*
+
+These workflows include an input variable that allows the developer to choose either `linux/amd64` or `linux/arm6` as the CPU architecture for the built container.
 
 - `ecr-multi-arch-deploy-dev.yml`: Build/Publish Docker container in dev (for ECS or Lambda)
 - `ecr-multi-arch-deploy-stage.yml`: Build/Publish Docker container in stage (for ECS or Lambda)
 - `ecr-multi-arch-promote-prod.yml`: Copy Docker container from stage to prod (for ECS or Lambda)
 
+The caller workflows are generated programmatically by the [mitlib-tf-workloads-ecr](https://github.com/MITLibraries/mitlib-tf-workloads-ecr) repository and then are copy/pasted from the Terraform Cloud outputs into the calling application repository.
+
 ### ecr-multi-arch-deploy-dev.yml & ecr-multi-arch-deploy-stage.yml
 
 These two workflows are the same. They require
 
-- shared secrets that exists in our MITLibraries GitHub Organization.
-- a caller workflow that passes expected values to the shared workflow (see [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) for the Terraform-generated calling workflows)
+- shared secrets that exists in our MITLibraries GitHub Organization
+- a caller workflow that passes expected values to the shared workflow
 
 The container that is pushed to the AWS ECR Repository in Dev1 is tagged with
 
 - the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
 - the PR number for the repo
-- the word "latest"
+- the word `latest` (or `latest-arm64` or `latest-amd64`)
 
 The container that is pushed to the AWS ECR Repository in Stage-Workloads is tagged with
 
 - the short (8 character) SHA of the merge commit
-- the word "latest"
+- the word `latest` (or `latest-arm64` or `latest-amd64`)
 
-The workflow requires a `CPU_ARCH` input. This is used to pick the GitHub-hosted runner architecture for the whole job and then it is used during the Docker build step to build the container for the correct architecture. See [partner-runner-images](https://github.com/actions/partner-runner-images?tab=readme-ov-file) for information related to `ARM64` based hosted runners.
+The workflow requires a `CPU_ARCH` input. This is used to pick the GitHub-hosted runner architecture for the whole job and then it is used during the Docker build step to build the container for the correct architecture. See [partner-runner-images](https://github.com/actions/partner-runner-images?tab=readme-ov-file) for information related to `ARM64` based GitHub-hosted runners (the default GitHub-hosted runner is based on `AMD64`).
 
 ### ecr-multi-arch-promote-prod.yml
 
@@ -114,7 +120,7 @@ The container that is pushed to the AWS ECR Repository in Prod is tagged with
 
 - the short (8 character) SHA of the tagged merge commit
 - the release tag name
-- the word "latest"
+- the word `latest` (or `latest-arm64` or `latest-amd64` or `MANUAL_TRIGGER`)
 
 ### Additional Requirements/Dependencies
 

@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Build and Deploy to Stage ECR on ${{ inputs.CPU_ARCH }}
+    name: AWS ECR on ${{ inputs.CPU_ARCH }}
     # Pick a runner that matches the CPU architecture of the container
     runs-on: ${{ inputs.CPU_ARCH == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest'  }}
     # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
@@ -63,8 +63,14 @@ jobs:
         # Extra effort on tagging is necessary because GHA checkout uses a "detached head" 
         id: tags
         run: |
+          CLEANED_ARCH=$(echo ${{ inputs.CPU_ARCH }} | cut -d'/' -f2)
           TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8)
           echo "tag_sha=${TAG_SHA}" >> $GITHUB_OUTPUT
+          if [[ -f ".aws-architecture" ]]; then
+            echo "tag_latest=latest-${CLEANED_ARCH}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_latest=latest" >> $GITHUB_OUTPUT
+          fi
 
       - name: Get Python
         # Run the Python setup only when there is a .python-version file in the root
@@ -96,31 +102,38 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build and Push container
-        uses: docker/build-push-action@v6
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR }}
           TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
-        with:
-          context: .
-          push: true
-          platforms: ${{ inputs.CPU_ARCH }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:latest
-            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }}
+          TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
+        run: |
+          echo "### :whale: Docker Build" >> $GITHUB_STEP_SUMMARY
+          DOCKER_BUILDKIT=1 docker build \
+            -t ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }} \
+            -t ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }} \
+            .
+          docker push ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }}
+          docker push ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }}
+          
+          echo "✅ Successfully built and deployed the container." >> $GITHUB_STEP_SUMMARY
+          echo "**Platform**: \`${{ inputs.CPU_ARCH }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags**:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.TAG_LATEST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.TAG_SHA }}\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Update Lambda Function
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR }}
+          TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
         # Only update the Lambda Function if the developer passes in the Lambda Function name
         if: ${{ inputs.FUNCTION != '' }}
         run: |
+          echo "### λ Lambda Update" >> $GITHUB_STEP_SUMMARY
           aws lambda update-function-code \ 
             --function-name ${{ inputs.FUNCTION }} \
-            --image-uri ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:latest \
+            --image-uri ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }} \
             --query "LastUpdateStatusReasonCode" --output text
+          echo "✅ The Lambda function definition for \`${{ inputs.FUNCTION }}\` has been updated in Stage." >> $GITHUB_STEP_SUMMARY
