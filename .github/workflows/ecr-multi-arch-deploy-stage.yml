@@ -1,0 +1,139 @@
+# ECS Container Deployment for Fargate & Lambda for both ARM64 and AMD64
+name: Stage Deploy Container Multi-Arch
+
+on:
+  workflow_call:
+    inputs:
+      AWS_REGION:
+        default: 'us-east-1'
+        required: false
+        type: string
+      GHA_ROLE:
+        required: true
+        type: string
+      CPU_ARCH: # either linux/arm64 or linux/amd64
+        required: true
+        type: string
+      ECR:
+        required: true
+        type: string
+      FUNCTION:
+        required: false
+        type: string
+      PREBUILD:
+        required: false
+        type: string
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: AWS ECR on ${{ inputs.CPU_ARCH }}
+    # Pick a runner that matches the CPU architecture of the container
+    runs-on: ${{ inputs.CPU_ARCH == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest'  }}
+    # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
+    if: ${{ github.triggering_actor != 'dependabot[bot]' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Check Python or Ruby
+        id: buildcheck
+        # Check for the existence of files that set either the Python version or the Ruby version
+        # and capture this information for later use in the job. These values are used for
+        # conditional steps below to setup/configure the build environment for the container.
+        run: |
+          if [[ -f ".python-version" ]]; then
+            echo "python_repo=1" >> $GITHUB_OUTPUT
+          fi
+          if [[ -f ".ruby-version" ]]; then
+            echo "ruby_repo=1" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tags
+        # Extra effort on tagging is necessary because GHA checkout uses a "detached head" 
+        id: tags
+        run: |
+          CLEANED_ARCH=$(echo ${{ inputs.CPU_ARCH }} | cut -d'/' -f2)
+          TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8)
+          echo "tag_sha=${TAG_SHA}" >> $GITHUB_OUTPUT
+          if [[ -f ".aws-architecture" ]]; then
+            echo "tag_latest=latest-${CLEANED_ARCH}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_latest=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get Python
+        # Run the Python setup only when there is a .python-version file in the root
+        # of the repository. Otherwise, this step is skipped.
+        if: ${{ steps.buildcheck.outputs.python_repo == '1' }}
+        uses: actions/setup-python@v5
+        with: 
+          python-version-file: '.python-version'
+
+      - name: Get Ruby
+        # Run the Ruby setup setup only when there is a .ruby-version file in the 
+        # root of the repository. Otherwise, this step is skipped.
+        if: ${{ steps.buildcheck.outputs.ruby_repo == '1' }}
+        uses: ruby/setup-ruby@v1 # by default, this uses the .ruby-version file to set the version
+
+      - name: Run pre-build steps
+        # Only run this step if the app developer has specified "pre-build" commands
+        # in the caller workflow.
+        if: ${{ inputs.PREBUILD != '' }} 
+        run: ${{ inputs.PREBUILD }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push container
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ inputs.ECR }}
+          TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
+          TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
+        run: |
+          echo "### :whale: Docker Build" >> $GITHUB_STEP_SUMMARY
+          DOCKER_BUILDKIT=1 docker build \
+            -t ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }} \
+            -t ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }} \
+            .
+          docker push ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }}
+          docker push ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }}
+          
+          echo "✅ Successfully built and deployed the container." >> $GITHUB_STEP_SUMMARY
+          echo "**Platform**: \`${{ inputs.CPU_ARCH }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags**:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.TAG_LATEST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.TAG_SHA }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Update Lambda Function
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ inputs.ECR }}
+          TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
+        # Only update the Lambda Function if the developer passes in the Lambda Function name
+        if: ${{ inputs.FUNCTION != '' }}
+        run: |
+          echo "### λ Lambda Update" >> $GITHUB_STEP_SUMMARY
+          aws lambda update-function-code \ 
+            --function-name ${{ inputs.FUNCTION }} \
+            --image-uri ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }} \
+            --query "LastUpdateStatusReasonCode" --output text
+          echo "✅ The Lambda function definition for \`${{ inputs.FUNCTION }}\` has been updated in Stage." >> $GITHUB_STEP_SUMMARY
