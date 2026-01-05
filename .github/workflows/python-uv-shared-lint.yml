@@ -1,0 +1,30 @@
+# This workflow runs linters on the repo 
+# with uv as the Python package and project manager
+
+# Requirements: Calling repo must 
+# - specify the Python version in a .python-version file or in a pyproject.toml
+# - contain a Makefile with a `make lint` command.
+
+name: Python Shared Linting Workflow
+
+on: 
+  pull_request:
+    paths-ignore:
+        - '.github/**'
+  workflow_call:
+  
+jobs:
+  lint:
+    name: Run linters
+    runs-on: ubuntu-latest
+    steps: 
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Create virtual environment
+        run: make install
+      
+      - name: Lint
+        run: make lint
