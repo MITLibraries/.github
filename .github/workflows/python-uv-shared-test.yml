@@ -7,11 +7,7 @@
 
 name: Python Shared Test Workflow
 
-on: 
-  pull_request:
-    paths-ignore:
-      - '.github/**'
-  workflow_call:
+on: workflow_call
 
 jobs:
   test: 
