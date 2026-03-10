@@ -143,7 +143,7 @@ jobs:
         if: ${{ inputs.FUNCTION != '' }}
         run: |
           echo "### λ Lambda Update" >> $GITHUB_STEP_SUMMARY
-          aws lambda update-function-code \ 
+          aws lambda update-function-code \
             --function-name ${{ inputs.FUNCTION }} \
             --image-uri ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }} \
             --query "LastUpdateStatusReasonCode" --output text
