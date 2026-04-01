@@ -51,6 +51,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Configure AWS credentials for Stage
         id: login-aws-stage
@@ -61,8 +63,10 @@ jobs:
 
       - name: Set Architecture
         id: cpu_arch
+        env:
+          CPU_ARCH: ${{ inputs.CPU_ARCH }}
         run: |
-          CLEANED_ARCH=$(echo ${{ inputs.CPU_ARCH }} | cut -d'/' -f2)
+          CLEANED_ARCH=$(echo ${CPU_ARCH} | cut -d'/' -f2)
           if [[ -f ".aws-architecture" ]]; then
             echo "tag_latest=latest-${CLEANED_ARCH}" >> $GITHUB_OUTPUT
           else
@@ -78,7 +82,7 @@ jobs:
           REPOSITORY: ${{ inputs.ECR_STAGE }}
           TAG_LATEST: ${{ steps.cpu_arch.outputs.tag_latest }}
         run: |
-          export ECR_SHA=$(aws ecr describe-images --repository-name $REPOSITORY --image-ids imageTag=${{ env.TAG_LATEST }} --query 'imageDetails[].imageTags' | sed -E 's/[^a-zA-Z0-9]/\n/g' | grep -E '^[a-f0-9]{8}$')
+          export ECR_SHA=$(aws ecr describe-images --repository-name $REPOSITORY --image-ids imageTag=${TAG_LATEST} --query 'imageDetails[].imageTags' | sed -E 's/[^a-zA-Z0-9]/\n/g' | grep -E '^[a-f0-9]{8}$')
           if [[ ${GITHUB_SHA::8} == $ECR_SHA ]]; then
             echo "sha_match=true" >> $GITHUB_OUTPUT
             echo "### SHA Match Success" >> $GITHUB_STEP_SUMMARY
@@ -86,7 +90,7 @@ jobs:
           else
             echo "sha_match=false" >> $GITHUB_OUTPUT
             echo "### SHA Match Failure" >> $GITHUB_STEP_SUMMARY
-            echo "FAILURE: Stage-Workloads SHA did not match the default branch (${{ env.DEFAULT_BRANCH }})." >> $GITHUB_STEP_SUMMARY
+            echo "FAILURE: Stage-Workloads SHA did not match the default branch (${DEFAULT_BRANCH})." >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
 
@@ -108,7 +112,7 @@ jobs:
           REGISTRY: ${{ steps.login-ecr-stage.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR_STAGE }}
           TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
-        run: docker pull ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }}
+        run: docker pull ${REGISTRY}/${REPOSITORY}:${TAG_SHA}
 
       - name: Configure AWS credentials for Prod
         if: ${{ steps.check_sha.outputs.sha_match == 'true' }}
@@ -135,22 +139,22 @@ jobs:
           TAG_LATEST: ${{ steps.cpu_arch.outputs.tag_latest }}
         run: |
           echo "### :whale: Promote Container to Production" >> $GITHUB_STEP_SUMMARY
-          docker tag ${{ env.REGISTRY_STAGE }}/${{ env.REPOSITORY_STAGE }}:${{ env.TAG_SHA }} ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:${{ env.TAG_LATEST }}
-          docker tag ${{ env.REGISTRY_STAGE }}/${{ env.REPOSITORY_STAGE }}:${{ env.TAG_SHA }} ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:${{ env.TAG_SHA }}
-          docker push ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:${{ env.TAG_LATEST }}
-          docker push ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:${{ env.TAG_SHA }}
+          docker tag ${REGISTRY_STAGE}/${REPOSITORY_STAGE}:${TAG_SHA} ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_LATEST}
+          docker tag ${REGISTRY_STAGE}/${REPOSITORY_STAGE}:${TAG_SHA} ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_SHA}
+          docker push ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_LATEST}
+          docker push ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_SHA}
           
           echo "✅ Promoted image to Prod ECR with the following tags:" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ env.TAG_LATEST }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ env.TAG_SHA }}\` (GitHub SHA)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${TAG_LATEST}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${TAG_SHA}\` (GitHub SHA)" >> $GITHUB_STEP_SUMMARY
 
           if [ $GITHUB_EVENT_NAME != "workflow_dispatch" ]; then
-            docker tag ${{ env.REGISTRY_STAGE }}/${{ env.REPOSITORY_STAGE }}:${GITHUB_SHA::8} ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:${{ env.TAG_RELEASE }}
-            docker push ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:${{ env.TAG_RELEASE }}
-            echo "- \`${{ env.TAG_RELEASE }}\` (GitHub Release Version)" >> $GITHUB_STEP_SUMMARY
+            docker tag ${REGISTRY_STAGE}/${REPOSITORY_STAGE}:${GITHUB_SHA::8} ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_RELEASE}
+            docker push ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_RELEASE}
+            echo "- \`${TAG_RELEASE}\` (GitHub Release Version)" >> $GITHUB_STEP_SUMMARY
           else
-            docker tag ${{ env.REGISTRY_STAGE }}/${{ env.REPOSITORY_STAGE }}:${GITHUB_SHA::8} ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:MANUAL_TRIGGER
-            docker push ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:MANUAL_TRIGGER
+            docker tag ${REGISTRY_STAGE}/${REPOSITORY_STAGE}:${GITHUB_SHA::8} ${REGISTRY_PROD}/${REPOSITORY_PROD}:MANUAL_TRIGGER
+            docker push ${REGISTRY_PROD}/${REPOSITORY_PROD}:MANUAL_TRIGGER
             echo "- \`MANUAL_TRIGGER\`" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -161,10 +165,11 @@ jobs:
           REGISTRY_PROD: ${{ steps.login-ecr-prod.outputs.registry }}
           REPOSITORY_PROD: ${{ inputs.ECR_PROD }}
           TAG_LATEST: ${{ steps.cpu_arch.outputs.tag_latest }}
+          FUNCTION: ${{ inputs.FUNCTION }}
         run: | 
           aws lambda update-function-code \
-            --function-name ${{ inputs.FUNCTION }} \
-            --image-uri ${{ env.REGISTRY_PROD }}/${{ env.REPOSITORY_PROD }}:${{ env.TAG_LATEST }} \
+            --function-name ${FUNCTION} \
+            --image-uri ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_LATEST} \
             --query "LastUpdateStatusReasonCode" \
             --output text
           echo "### λ Lambda Function" >> $GITHUB_STEP_SUMMARY
