@@ -17,6 +17,10 @@ on:
       ECR:
         required: true
         type: string
+      DOCKERFILE:
+        default: 'Dockerfile'
+        required: false
+        type: string
       FUNCTION:
         required: false
         type: string
@@ -113,12 +117,14 @@ jobs:
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR }}
+          DOCKERFILE: ${{ inputs.DOCKERFILE }}
           TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
           TAG_PR: ${{ steps.tags.outputs.tag_pr }}
           TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
         run: |
           echo "### :whale: Docker Build" >> $GITHUB_STEP_SUMMARY
           DOCKER_BUILDKIT=1 docker build \
+            -f ${{ env.DOCKERFILE }} \
             -t ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_LATEST }} \
             -t ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }} \
             -t ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_PR }} \
@@ -127,7 +133,7 @@ jobs:
           docker push ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_SHA }}
           docker push ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ env.TAG_PR }}
           
-          echo "✅ Successfully built and deployed the container." >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully built and deployed the container from ${{ env.DOCKERFILE }}." >> $GITHUB_STEP_SUMMARY
           echo "**Platform**: \`${{ inputs.CPU_ARCH }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Tags**:" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.TAG_LATEST }}\`" >> $GITHUB_STEP_SUMMARY
