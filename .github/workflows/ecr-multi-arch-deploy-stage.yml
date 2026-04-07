@@ -1,5 +1,5 @@
 # ECS Container Deployment for Fargate & Lambda for both ARM64 and AMD64
-name: Stage Deploy Container Multi-Arch
+name: Stage Deploy Image Multi-Arch
 
 on:
   workflow_call:
@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       CPU_ARCH: # either linux/arm64 or linux/amd64
-        required: true
+        required: false
         type: string
       ECR:
         required: true
@@ -39,12 +39,48 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
-    name: AWS ECR on ${{ inputs.CPU_ARCH }}
+  prep:
+    name: Set CPU Architecture
+    runs-on: ubuntu-latest
+    outputs:
+      cpuarch: ${{ steps.setarch.outputs.cpuarch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set CPU Architecture
+        id: setarch
+        # This checks for the existence of an `.aws-architecture` file in the application repository. If
+        # that file exists, it uses the file to determine the CPU architecture for the docker build. If
+        # the file does not exist, it defaults to `linux/amd64` which has been the default CPU architecture
+        # until recently. Finally, it exports this string for use in later jobs.
+        run: |
+          echo "### :abacus: Architecture Selection" >> $GITHUB_STEP_SUMMARY
+          if [[ -f .aws-architecture ]]; then
+            ARCH=$(cat .aws-architecture)
+            echo "\`$ARCH\` was read from \`.aws-architecture\` and passed to the deploy job." >> $GITHUB_STEP_SUMMARY
+          else
+            ARCH="linux/amd64"
+            echo "No \`.aws-architecture\` file, so default \`$ARCH\` was passed to the deploy job." >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ "$ARCH" != "linux/arm64" && "$ARCH" != "linux/amd64" ]]; then
+            echo "$ARCH is INVALID architecture!"
+            echo "$ARCH is INVALID architecture!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "cpuarch=$ARCH" >> $GITHUB_OUTPUT
+
+  build-push:
+    name: Build and Push to AWS ECR on ${{ needs.prep.outputs.cpuarch }}
+    needs: prep
     # Pick a runner that matches the CPU architecture of the container
-    runs-on: ${{ inputs.CPU_ARCH == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest'  }}
-    # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it. 
+    runs-on: ${{ needs.prep.outputs.cpuarch == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest'  }}
+    # This line adds a check for the user which is requesting the PR. As long as its not dependabot, we go ahead and run it.
     if: ${{ github.triggering_actor != 'dependabot[bot]' }}
+    outputs:
+      tag_latest: ${{ steps.tags.outputs.tag_latest}}
 
     steps:
       - name: Checkout code
@@ -66,10 +102,19 @@ jobs:
           fi
 
       - name: Create tags
-        # Extra effort on tagging is necessary because GHA checkout uses a "detached head" 
         id: tags
         env:
-          CPU_ARCH: ${{ inputs.CPU_ARCH }}
+          CPU_ARCH: ${{ needs.prep.outputs.cpuarch }}
+        # Extra effort on tagging is necessary because GHA checkout uses a "detached head". Here
+        # we create the tags we will need later when building and pushing the image to ECR in AWS.
+        # TAG_SHA is pulled directly from the GHA environment and then shortened to eight characters.
+        # The TAG_LATEST depends on whether we are in "default AMD64" mode or in the specify the
+        # the CPU architecture via a .aws-architecture file mode. In the latter, we postpend the
+        # CPU type after `latest` so that it is very clear in ECR what CPU architecture is
+        # expected (and this allows us to use this workflow even for infrastructure that has not
+        # yet been updated to support different CPU architectures).
+        # NOTE: We strip the `linux/` from the CPU_ARCH because `docker` cannot handle slashes
+        # in tag names!
         run: |
           CLEANED_ARCH=$(echo ${CPU_ARCH} | cut -d'/' -f2)
           TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8)
@@ -85,11 +130,11 @@ jobs:
         # of the repository. Otherwise, this step is skipped.
         if: ${{ steps.buildcheck.outputs.python_repo == '1' }}
         uses: actions/setup-python@v6
-        with: 
-          python-version-file: '.python-version'
+        with:
+          python-version-file: ".python-version"
 
       - name: Get Ruby
-        # Run the Ruby setup setup only when there is a .ruby-version file in the 
+        # Run the Ruby setup setup only when there is a .ruby-version file in the
         # root of the repository. Otherwise, this step is skipped.
         if: ${{ steps.buildcheck.outputs.ruby_repo == '1' }}
         uses: ruby/setup-ruby@v1 # by default, this uses the .ruby-version file to set the version
@@ -97,7 +142,7 @@ jobs:
       - name: Run pre-build steps
         # Only run this step if the app developer has specified "pre-build" commands
         # in the caller workflow.
-        if: ${{ inputs.PREBUILD != '' }} 
+        if: ${{ inputs.PREBUILD != '' }}
         env:
           PREBUILD: ${{ inputs.PREBUILD }}
         run: ${PREBUILD}
@@ -112,11 +157,12 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and Push container
+      - name: Build and Push Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR }}
           DOCKERFILE: ${{ inputs.DOCKERFILE }}
+          CPU_ARCH: ${{ needs.prep.outputs.cpuarch }}
           TAG_SHA: ${{ steps.tags.outputs.tag_sha }}
           TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
         run: |
@@ -128,18 +174,37 @@ jobs:
             .
           docker push ${REGISTRY}/${REPOSITORY}:${TAG_LATEST}
           docker push ${REGISTRY}/${REPOSITORY}:${TAG_SHA}
-          
+
           echo "✅ Successfully built and deployed the container from ${DOCKERFILE}." >> $GITHUB_STEP_SUMMARY
-          echo "**Platform**: \` \`" >> $GITHUB_STEP_SUMMARY
+          echo "**Platform**: \`${CPU_ARCH}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Tags**:" >> $GITHUB_STEP_SUMMARY
           echo "- \`${TAG_LATEST}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${TAG_SHA}\`" >> $GITHUB_STEP_SUMMARY
+
+  deploy-lambda:
+    # Note: image-based Lambdas must be explicitly updated to load the latest image
+    #       into the Lambda Function.
+    # Only run this job if the Lambda Function name is passed from caller workflow
+    if: ${{ inputs.FUNCTION != '' }}
+    name: Deploy Lambda Function
+    runs-on: ubuntu-latest
+    needs: build-push
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Update Lambda Function
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ inputs.ECR }}
-          TAG_LATEST: ${{ steps.tags.outputs.tag_latest }}
+          TAG_LATEST: ${{ needs.build-push.outputs.tag_latest }}
           FUNCTION: ${{ inputs.FUNCTION }}
         # Only update the Lambda Function if the developer passes in the Lambda Function name
         if: ${{ inputs.FUNCTION != '' }}

@@ -74,33 +74,35 @@ There are three workflows associated with publishing Docker containers to AWS EC
 
 **Note**: *While these workflows publish containers to ECR they do ***NOT*** force ECS services to restart with the new container.*
 
-These workflows include an input variable that allows the developer to choose either `linux/amd64` or `linux/arm6` as the CPU architecture for the built container.
+These workflows include an input variable that allows the developer to choose either `linux/amd64` or `linux/arm64` as the CPU architecture for the built container. **Note**: We are moving away from this input variable in favor of handling the CPU architecture decision in the shared workflow itself.
 
 - `ecr-multi-arch-deploy-dev.yml`: Build/Publish Docker container in dev (for ECS or Lambda)
 - `ecr-multi-arch-deploy-stage.yml`: Build/Publish Docker container in stage (for ECS or Lambda)
 - `ecr-multi-arch-promote-prod.yml`: Copy Docker container from stage to prod (for ECS or Lambda)
 
-The caller workflows are generated programmatically by the [mitlib-tf-workloads-ecr](https://github.com/MITLibraries/mitlib-tf-workloads-ecr) repository and then are copy/pasted from the Terraform Cloud outputs into the calling application repository.
+**DEPRECATED**: The caller workflows are generated programmatically by the [mitlib-tf-workloads-ecr](https://github.com/MITLibraries/mitlib-tf-workloads-ecr) repository and then are copy/pasted from the Terraform Cloud outputs into the calling application repository.
+
+**Note**: Moving forward, the caller workflows will be part of the template repositories for the various Python applications.
 
 ### ecr-multi-arch-deploy-dev.yml & ecr-multi-arch-deploy-stage.yml
 
-These two workflows are the same. They require
+These two workflows are functionally the same. They require
 
 - shared secrets that exists in our MITLibraries GitHub Organization
 - a caller workflow that passes expected values to the shared workflow
 
-The container that is pushed to the AWS ECR Repository in Dev1 is tagged with
+The image that is pushed to the AWS ECR Repository in Dev1 is tagged with
 
 - the short (8 character) SHA of the most recent commit on the feature branch that generated the PR
 - the PR number for the repo
 - the word `latest` (or `latest-arm64` or `latest-amd64`)
 
-The container that is pushed to the AWS ECR Repository in Stage-Workloads is tagged with
+The image that is pushed to the AWS ECR Repository in Stage-Workloads is tagged with
 
 - the short (8 character) SHA of the merge commit
 - the word `latest` (or `latest-arm64` or `latest-amd64`)
 
-The workflow requires a `CPU_ARCH` input. This is used to pick the GitHub-hosted runner architecture for the whole job and then it is used during the Docker build step to build the container for the correct architecture. See [partner-runner-images](https://github.com/actions/partner-runner-images?tab=readme-ov-file) for information related to `ARM64` based GitHub-hosted runners (the default GitHub-hosted runner is based on `AMD64`).
+The first step the workflow verifies the CPU architecture for the image and passes this information on to the build-push job so that the build-push job can run on the same CPU architecture. See [partner-runner-images](https://github.com/actions/partner-runner-images?tab=readme-ov-file) for information related to `ARM64` based GitHub-hosted runners (the default GitHub-hosted runner is based on `AMD64`).
 
 ### ecr-multi-arch-promote-prod.yml
 
@@ -109,7 +111,7 @@ The promote to prod workflow just copies the container from stage to prod to ens
 The caller workflows for this shared workflow are configured with `on.workflow_dispatch` and `on.release.types: [published]`. The former allows for manual deploys from the GitHub UI and the latter is for deploying to production when a new release tag is issued. But, we want to ensure that only tagged releases on the `main` branch of the calling repository will trigger a run (we don't want a published tag on a feature branch to unintentionally push something to Production). So, we add a conditional for the `job.deploy` that checks the calling branch:
 
 ```yaml
-    if: ${{ github.ref == 'refs/heads/main' || github.event.release.target_commitish == 'main' }}
+    if: ${{ github.event.release.target_commitish == inputs.DEFAULT_BRANCH }}
 ```
 
 The `github.ref` value gets set when the trigger is a release tag. The `github.event.release.target_commitish` value gets set when the trigger is `workflow_dispatch`.
@@ -125,6 +127,42 @@ The container that is pushed to the AWS ECR Repository in Prod is tagged with
 ### Additional Requirements/Dependencies
 
 It also assumes that the appropriate infrastructure is in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS. In most cases, this is handled by the [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) repository. That same repository generates the GHA workflow files for each ECR repository so that they can be copied from Terraform Cloud into the application repository.
+
+### Examples
+
+A sample `dev-build.yml` workflow will look like this (same goes for `stage-build.yml`):
+
+```yaml
+  build-push:
+    name: Dev Build and Push
+    uses: mitlibraries/.github/.github/workflows/ecr-multi-arch-deploy-dev.yml@main
+    secrets: inherit
+    with:
+      AWS_REGION: "us-east-1"
+      GHA_ROLE: "<iam_role_for_repository>"
+      ECR: "<ecr_name>"
+      # FUNCTION: "" # only if this is a container-based Lambda function
+      # PREBUILD:  # only if there is some pre-build dependency
+```
+
+The `prod-promote.yml` workflow will look like this:
+
+```yaml
+  build-push:
+    needs: prep
+    name: Deploy
+    uses: mitlibraries/.github/.github/workflows/ecr-multi-arch-promote-prod.yml@main
+    secrets: inherit
+    with:
+      AWS_REGION: "us-east-1"
+      GHA_ROLE_STAGE: "<iam_role_for_repository_stage>"
+      GHA_ROLE_PROD: "<iam_role_for_repository_prod>"
+      ECR_STAGE: "<ecr_name_stage>"
+      ECR_PROD: "<ecr_name_prod>"
+      # FUNCTION: "" # only if this is a container-based Lambda function
+ ```
+
+If the application repo is building a container for a Lambda function, the developer must include the `FUNCTION: "${function}"` line. If the application (Python or Ruby) has additional pre-build commands that must be run before the `docker-build` command is run, they need to be added to the `PREBUILD"` argument. It is best if these are handled by the `Makefile`/`Rakefile`, so that the `PREBUILD:` line is just a list of `make`/`rake` commands.
 
 ## DEPRECATED: Build and Publish Containers
 

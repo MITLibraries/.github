@@ -1,11 +1,11 @@
 # ECS Container Deployment for Fargate & Lambda for both ARM64 and AMD64
-name: Prod Promote Container Multi-Arch
+name: Prod Promote Image Multi-Arch
 
 on:
   workflow_call:
     inputs:
       AWS_REGION:
-        default: 'us-east-1'
+        default: "us-east-1"
         required: false
         type: string
       GHA_ROLE_STAGE:
@@ -21,32 +21,70 @@ on:
         required: true
         type: string
       DEFAULT_BRANCH:
-        default: 'main'
+        default: "main"
         required: false
         type: string
       CPU_ARCH: # either linux/arm64 or linux/amd64
-        required: true
+        required: false
         type: string
       FUNCTION:
         required: false
         type: string
-
-# These permissions are needed to interact with GitHub's OIDC Token endpoint.
-permissions:
-  id-token: write
-  contents: read
 
 # Set defaults
 defaults:
   run:
     shell: bash
 
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
+  prep:
+    if: ${{ github.event.release.target_commitish == inputs.DEFAULT_BRANCH }}
+    name: Set CPU Architecture
+    runs-on: ubuntu-latest
+    outputs:
+      cpuarch: ${{ steps.setarch.outputs.cpuarch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set CPU Architecture
+        id: setarch
+        # This checks for the existence of an `.aws-architecture` file in the application repository. If
+        # that file exists, it uses the file to determine the CPU architecture for the docker build. If
+        # the file does not exist, it defaults to `linux/amd64` which has been the default CPU architecture
+        # until recently. Finally, it exports this string for use in later jobs.
+        run: |
+          echo "### :abacus: Architecture Selection" >> $GITHUB_STEP_SUMMARY
+          if [[ -f .aws-architecture ]]; then
+            ARCH=$(cat .aws-architecture)
+            echo "\`$ARCH\` was read from \`.aws-architecture\` and passed to the deploy job." >> $GITHUB_STEP_SUMMARY
+          else
+            ARCH="linux/amd64"
+            echo "No \`.aws-architecture\` file, so default \`$ARCH\` was passed to the deploy job." >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ "$ARCH" != "linux/arm64" && "$ARCH" != "linux/amd64" ]]; then
+            echo "$ARCH is INVALID architecture!"
+            echo "$ARCH is INVALID architecture!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "cpuarch=$ARCH" >> $GITHUB_OUTPUT
+
   promote:
     if: ${{ github.event.release.target_commitish == inputs.DEFAULT_BRANCH }}
     name: Promote to Prod
+    needs: prep
     # E.g., download from Stage then upload to Prod
     runs-on: ubuntu-latest
+    outputs:
+      tag_latest: ${{ steps.tags.outputs.tag_latest }}
+      sha_match: ${{ steps.check_sha.outputs.sha_match }}
 
     steps:
       - name: Checkout code
@@ -64,7 +102,14 @@ jobs:
       - name: Set Architecture
         id: cpu_arch
         env:
-          CPU_ARCH: ${{ inputs.CPU_ARCH }}
+          CPU_ARCH: ${{ needs.prep.outputs.cpuarch }}
+        # The TAG_LATEST depends on whether we are in "default AMD64" mode or in the specify the
+        # the CPU architecture via a .aws-architecture file mode. In the latter, we postpend the
+        # CPU type after `latest` so that it is very clear in ECR what CPU architecture is
+        # expected (and this allows us to use this workflow even for infrastructure that has not
+        # yet been updated to support different CPU architectures).
+        # NOTE: We strip the `linux/` from the CPU_ARCH because `docker` cannot handle slashes
+        # in tag names!
         run: |
           CLEANED_ARCH=$(echo ${CPU_ARCH} | cut -d'/' -f2)
           if [[ -f ".aws-architecture" ]]; then
@@ -143,7 +188,7 @@ jobs:
           docker tag ${REGISTRY_STAGE}/${REPOSITORY_STAGE}:${TAG_SHA} ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_SHA}
           docker push ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_LATEST}
           docker push ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_SHA}
-          
+
           echo "✅ Promoted image to Prod ECR with the following tags:" >> $GITHUB_STEP_SUMMARY
           echo "- \`${TAG_LATEST}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${TAG_SHA}\` (GitHub SHA)" >> $GITHUB_STEP_SUMMARY
@@ -158,15 +203,33 @@ jobs:
             echo "- \`MANUAL_TRIGGER\`" >> $GITHUB_STEP_SUMMARY
           fi
 
+  deploy-lambda:
+    # Note: image-based Lambdas must be explicitly updated to load the latest image
+    #       into the Lambda Function.
+    # Only run this job if the Lambda Function name is passed from caller workflow
+    if:
+      ${{ inputs.FUNCTION != '' && needs.promote.outputs.sha_match == 'true' }}
+    name: Deploy Lambda Function
+    runs-on: ubuntu-latest
+    needs: promote
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE_PROD }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr-prod
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Update Lambda Function in Prod
-        # Only update the Lambda Function if the container is destined for Lambda
-        if: ${{ inputs.FUNCTION != '' && steps.check_sha.outputs.sha_match == 'true' }}
         env:
           REGISTRY_PROD: ${{ steps.login-ecr-prod.outputs.registry }}
           REPOSITORY_PROD: ${{ inputs.ECR_PROD }}
-          TAG_LATEST: ${{ steps.cpu_arch.outputs.tag_latest }}
+          TAG_LATEST: ${{ needs.promote.outputs.tag_latest }}
           FUNCTION: ${{ inputs.FUNCTION }}
-        run: | 
+        run: |
           aws lambda update-function-code \
             --function-name ${FUNCTION} \
             --image-uri ${REGISTRY_PROD}/${REPOSITORY_PROD}:${TAG_LATEST} \
