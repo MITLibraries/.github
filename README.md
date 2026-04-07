@@ -74,7 +74,7 @@ There are three workflows associated with publishing Docker containers to AWS EC
 
 **Note**: *While these workflows publish containers to ECR they do ***NOT*** force ECS services to restart with the new container.*
 
-These workflows include an input variable that allows the developer to choose either `linux/amd64` or `linux/arm64` as the CPU architecture for the built container.
+These workflows include an input variable that allows the developer to choose either `linux/amd64` or `linux/arm64` as the CPU architecture for the built container. **Note**: We are moving away from this input variable in favor of handling the CPU architecture decision in the shared workflow itself.
 
 - `ecr-multi-arch-deploy-dev.yml`: Build/Publish Docker container in dev (for ECS or Lambda)
 - `ecr-multi-arch-deploy-stage.yml`: Build/Publish Docker container in stage (for ECS or Lambda)
@@ -82,7 +82,7 @@ These workflows include an input variable that allows the developer to choose ei
 
 **DEPRECATED**: The caller workflows are generated programmatically by the [mitlib-tf-workloads-ecr](https://github.com/MITLibraries/mitlib-tf-workloads-ecr) repository and then are copy/pasted from the Terraform Cloud outputs into the calling application repository.
 
-Moving forward, the caller workflows will be part of the template repositories for the various Python applications.
+**Note**: Moving forward, the caller workflows will be part of the template repositories for the various Python applications.
 
 ### ecr-multi-arch-deploy-dev.yml & ecr-multi-arch-deploy-stage.yml
 

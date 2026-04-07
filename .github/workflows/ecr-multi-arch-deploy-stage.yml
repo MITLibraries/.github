@@ -52,6 +52,10 @@ jobs:
 
       - name: Set CPU Architecture
         id: setarch
+        # This checks for the existence of an `.aws-architecture` file in the application repository. If
+        # that file exists, it uses the file to determine the CPU architecture for the docker build. If
+        # the file does not exist, it defaults to `linux/amd64` which has been the default CPU architecture
+        # until recently. Finally, it exports this string for use in later jobs.
         run: |
           echo "### :abacus: Architecture Selection" >> $GITHUB_STEP_SUMMARY
           if [[ -f .aws-architecture ]]; then
@@ -98,10 +102,19 @@ jobs:
           fi
 
       - name: Create tags
-        # Extra effort on tagging is necessary because GHA checkout uses a "detached head"
         id: tags
         env:
           CPU_ARCH: ${{ needs.prep.outputs.cpuarch }}
+        # Extra effort on tagging is necessary because GHA checkout uses a "detached head". Here
+        # we create the tags we will need later when building and pushing the image to ECR in AWS.
+        # TAG_SHA is pulled directly from the GHA environment and then shortened to eight characters.
+        # The TAG_LATEST depends on whether we are in "default AMD64" mode or in the specify the
+        # the CPU architecture via a .aws-architecture file mode. In the latter, we postpend the
+        # CPU type after `latest` so that it is very clear in ECR what CPU architecture is
+        # expected (and this allows us to use this workflow even for infrastructure that has not
+        # yet been updated to support different CPU architectures).
+        # NOTE: We strip the `linux/` from the CPU_ARCH because `docker` cannot handle slashes
+        # in tag names!
         run: |
           CLEANED_ARCH=$(echo ${CPU_ARCH} | cut -d'/' -f2)
           TAG_SHA=$(echo $GITHUB_SHA | cut -c 1-8)
