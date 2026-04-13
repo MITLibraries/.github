@@ -83,7 +83,7 @@ jobs:
     # E.g., download from Stage then upload to Prod
     runs-on: ubuntu-latest
     outputs:
-      tag_latest: ${{ steps.tags.outputs.tag_latest }}
+      tag_latest: ${{ steps.cpu_arch.outputs.tag_latest }}
       sha_match: ${{ steps.check_sha.outputs.sha_match }}
 
     steps:
