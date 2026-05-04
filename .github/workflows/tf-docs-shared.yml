@@ -17,9 +17,9 @@ jobs:
     - uses: actions/checkout@v6
       with:
         ref: ${{ github.event.pull_request.head.ref }}
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.13'
-    - uses: pre-commit/action@v3.0.1
-      with:
-        extra_args: terraform-docs-go --all-files
+
+    - name: Install pre-commit
+      run: pip install pre-commit
+    
+    - name: terraform-docs check
+      run: pre-commit run terraform-docs-go --all-files
