@@ -31,97 +31,131 @@ defaults:
 
 jobs:
   publish:
-    name: Publish content to CDN
+    name: Publish to CDN
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: DEV Configure AWS credentials
-        # Only run this step if the environment is "dev"
-        if: ${{ inputs.ENVIRONMENT == 'dev' }}
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v6
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_DEV }}:role/${{ inputs.GHA_ROLE }}
+          persist-credentials: false
+
+      - name: Set Environment
+        id: aws_env
+        env:
+          ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
+          GHA_ROLE: ${{ inputs.GHA_ROLE }}
+          AWS_DEV_ACCT: ${{ secrets.AWS_ACCT_DEV }}
+          AWS_STAGE_ACCT: ${{ secrets.AWS_ACCT_STAGE }}
+          AWS_PROD_ACCT: ${{ secrets.AWS_ACCT_PROD }}
+        run: |
+          if [ "$ENVIRONMENT" == "dev" ]; then
+            echo "ROLE=arn:aws:iam::$AWS_DEV_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+            echo "CDN_DOMAIN=dev1.mitlibrary.net" >> $GITHUB_ENV
+          elif [ "$ENVIRONMENT" == "stage" ]; then
+            echo "ROLE=arn:aws:iam::$AWS_STAGE_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+            echo "CDN_DOMAIN=stage.mitlibrary.net" >> $GITHUB_ENV
+          elif [ "$ENVIRONMENT" == "prod" ]; then
+            echo "ROLE=arn:aws:iam::$AWS_PROD_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+            echo "CDN_DOMAIN=libraries.mit.edu" >> $GITHUB_ENV
+          else
+            echo "ERROR: Incorrect environment was set" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      - name: Configure AWS Credentials
+        id: aws_credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}
 
-      - name: STAGE Configure AWS credentials
-        # Only run this step if the environment is "stage"
-        if: ${{ inputs.ENVIRONMENT == 'stage' }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
-          aws-region: ${{ inputs.AWS_REGION }}
-
-      - name: PROD Configure AWS credentials
-        # Only run this step if the environment is "prod"
-        if: ${{ inputs.ENVIRONMENT == 'prod' }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_PROD }}:role/${{ inputs.GHA_ROLE }}
-          aws-region: ${{ inputs.AWS_REGION }}
-
-      - name: Sync custom domain CDN S3 content
+      - name: Sync To Custom Domain CDN
         # Only run this step if this is custom domain content (e.g., a folder at the root of bucket)
         if: ${{ inputs.DOMAIN == 'custom' }}
+        env:
+          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
+          S3_URI: ${{ inputs.S3URI }}
         run: |
-          if [ '${{ inputs.SYNC_PARAMS }}' != '' ]; then
-            aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" ${{ inputs.SYNC_PARAMS }}
+          echo "### Content synchronization to $S3_URI." >> $GITHUB_STEP_SUMMARY
+          if [ "$SYNC_PARAMS" != "" ]; then
+            aws s3 sync . $S3_URI \
+              --delete \
+              --exclude ".github/*" \
+              --exclude ".git/*" \
+              --exclude ".gitignore" \
+              $SYNC_PARAMS
           else
-            aws s3 sync . ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore"
+            aws s3 sync . $S3_URI \
+              --delete \
+              --exclude ".github/*" \
+              --exclude ".git/*" 
+              --exclude ".gitignore"
           fi
-          echo "Content is synchronized to ${{ inputs.S3URI }}" >> $GITHUB_STEP_SUMMARY
+          echo "Content is synchronized to $S3_URI." >> $GITHUB_STEP_SUMMARY
 
-      - name: Sync standard CDN S3 content
+      - name: Sync To Standard Domain CDN
         # Only run this step if this is standard content (e.g., a subfolder of the cdn/ folder)
         if: ${{ inputs.DOMAIN == 'standard' }}
+        env:
+          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
+          S3_URI: ${{ inputs.S3URI }}
         run: |
-          if [ '${{ inputs.SYNC_PARAMS }}' != '' ]; then
-            aws s3 sync ./$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore" ${{ inputs.SYNC_PARAMS }}
+          echo "### Content synchronization" >> $GITHUB_STEP_SUMMARY
+          if [ "$SYNC_PARAMS" != "" ]; then
+            aws s3 sync ./$(echo $S3_URI | awk -F/ '{print $5}') $S3_URI \
+              --delete \
+              --exclude ".github/*" \
+              --exclude ".git/*" \
+              --exclude ".gitignore" \
+              $SYNC_PARAMS
           else
-            aws s3 sync ./$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') ${{ inputs.S3URI }} --delete --exclude ".github/*" --exclude ".git/*" --exclude ".gitignore"
+            aws s3 sync ./$(echo $S3_URI | awk -F/ '{print $5}') $S3_URI \
+              --delete \
+              --exclude ".github/*" \
+              --exclude ".git/*" \
+              --exclude ".gitignore"
           fi
-          echo "Content is synchronized to ${{ inputs.S3URI }}" >> $GITHUB_STEP_SUMMARY
+          echo "Content is synchronized to $S3_URI" >> $GITHUB_STEP_SUMMARY
 
       - name: Invalidate cache
+        env:
+          DOMAIN: ${{ inputs.DOMAIN }}
+          S3_URI: ${{ inputs.S3URI }}
         run: |
-          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
-            aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/standard-cdn-id" --query 'Parameter.Value' --output text) --paths "/*"
-            echo "The cache for the $(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') folder has been cleared." >> $GITHUB_STEP_SUMMARY
+          echo "### CDN cache invalidation" >> $GITHUB_STEP_SUMMARY
+          if [ $DOMAIN == "standard" ]; then
+            DISTRIBUTION_ID=$(aws ssm get-parameter \
+              --name "/tfvars/libraries-website/standard-cdn-id" \
+              --query 'Parameter.Value' \
+              --output text)
+            INVALIDATION_ID=$(aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/*" \
+              --query 'Invalidation.Id' \
+              --output text)
+            echo "Start CDN Cache invalidation"
+            aws cloudfront wait invalidation-completed \
+              --distribution-id $DISTRIBUTION_ID \
+              --id $INVALIDATION_ID
+            echo "The cache for the $(echo $S3_URI | awk -F/ '{print $5}') folder has been cleared." >> $GITHUB_STEP_SUMMARY
+            echo "The updates to https://cdn.$CDN_DOMAIN/$(echo $S3_URI | awk -F/ '{print $5}') are now available." >> $GITHUB_STEP_SUMMARY
           else
-            aws cloudfront create-invalidation --distribution-id $(aws ssm get-parameter --name "/tfvars/libraries-website/custom-cdn-id" --query 'Parameter.Value' --output text) --paths "/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}')/*"
-            echo "The cache for the $(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}') site has been cleared." >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Generate DEV Summary
-        # Only run this step if the environment is "dev"
-        if: ${{ inputs.ENVIRONMENT == 'dev' }}
-        run: |
-          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
-            echo "The updates to https://cdn.dev1.mitlibrary.net/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').dev1.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Generate STAGE Summary
-        # Only run this step if the environment is "stage"
-        if: ${{ inputs.ENVIRONMENT == 'stage' }}
-        run: |
-          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
-            echo "The updates to https://cdn.stage.mitlibrary.net/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').stage.mitlibrary.net site are now available" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Generate PROD Summary
-        # Only run this step if the environment is "prod"
-        if: ${{ inputs.ENVIRONMENT == 'prod' }}
-        run: |
-          if [ '${{ inputs.DOMAIN }}' == 'standard' ]; then
-            echo "The updates to https://cdn.libraries.mit.edu/$(echo ${{ inputs.S3URI }} | awk -F/ '{print $5}') are now available" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "The updates to https://$(echo ${{ inputs.S3URI }} | awk -F/ '{print $4}').libraries.mit.edu site are now available" >> $GITHUB_STEP_SUMMARY
+            DISTRIBUTION_ID=$(aws ssm get-parameter \
+              --name "/tfvars/libraries-website/custom-cdn-id" \
+              --query 'Parameter.Value' \
+              --output text)
+            INVALIDATION_ID=$(aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/$(echo $S3_URI | awk -F/ '{print $5}')/*" \
+              --query 'Invalidation.Id' \
+              --output text)
+            echo "Start CDN Cache invalidation."
+            aws cloudfront wait invalidation-completed \
+              --distribution-id $DISTRIBUTION_ID \
+              --id $INVALIDATION_ID
+            echo "The cache for the $(echo $S3_URI | awk -F/ '{print $4}') site has been cleared." >> $GITHUB_STEP_SUMMARY
+            echo "The updates to the https://$(echo $S3_URI | awk -F/ '{print $4}').$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
           fi
