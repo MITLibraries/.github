@@ -5,24 +5,47 @@ on:
   workflow_call:
     inputs:
       AWS_REGION:
-        required: true
+        description: "Region for AWS resources."
+        required: false
         type: string
-      GHA_ROLE:
-        required: true
-        type: string
-      ENVIRONMENT:
-        required: true
-        type: string
-      S3URI:
-        required: true
-        type: string
+        default: us-east-1
       DOMAIN:
+        description: "Indicates the standard CDN or a custom domain for the URL to the CDN (only standard or custom accepted)."
         required: false
         type: string
         default: standard
-      SYNC_PARAMS:
+      ENVIRONMENT:
+        description: "The AWS environment where the resources will be deployed."
+        required: true
+        type: string
+      GHA_ROLE:
+        description: "The IAM Role linked to the OIDC connection."
+        required: true
+        type: string
+      S3URI:
+        description: "Legacy (deprecated) full S3 URI for the sync target in AWS."
         required: false
         type: string
+      SOURCE_PATH:
+        description: "The path in the caller repository containing the files to sync to the S3 bucket."
+        required: false
+        type: string
+        default: .
+      SYNC_PARAMS:
+        description: "Additional parameters for the aws s3 sync command, specific to the caller repository."
+        required: false
+        type: string
+      TARGET_PATH:
+        description: "The prefix in the S3 bucket to which the repository files should be synced (must start with slash)."
+        required: false
+        type: string
+        default: /
+
+
+permissions:
+  # These are the minimum permissions to allow for OIDC connection to AWS
+  id-token: write
+  contents: read
 
 # Set defaults
 defaults:
@@ -30,132 +53,162 @@ defaults:
     shell: bash
 
 jobs:
-  publish:
-    name: Publish to CDN
+  prep:
+    # Start with validating the inputs from the caller workflow and prepping
+    # environment variables for the synchronization job.
+    name: Prep and Validate
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Set Environment
-        id: aws_env
+      - name: Validate
+        # Verify that the DOMAIN & ENVIRONMENT inputs are using the correct
+        # values. Verify that the SOURCE_PATH and TARGET_PATH inputs are
+        # formatted correctly.
+        id: validate
         env:
+          DOMAIN: ${{ inputs.DOMAIN }}
           ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
-          GHA_ROLE: ${{ inputs.GHA_ROLE }}
+          SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
+          TARGET_PATH: ${{ inputs.TARGET_PATH }}
+        run: |
+          case "$DOMAIN" in
+            standard|custom)
+              echo "Valid DOMAIN=$DOMAIN input, proceed."
+            ;;
+            *)
+              echo "Invalid DOMAIN=$DOMAIN input, exiting."
+              exit 1
+            ;;
+          esac
+          case "$ENVIRONMENT" in
+            dev|stage|prod)
+              echo "Valid ENVIRONMENT=$ENVIRONMENT input, proceed."
+            ;;
+            *)
+              echo "Invalid ENVIRONMENT=$ENVIRONMENT input, exiting."
+              exit 1
+            ;;
+          esac
+          if [[ "${SOURCE_PATH:0:1}" == "." ]]; then
+            echo "Valid SOURCE_PATH=$SOURCE_PATH, proceed."
+          else
+            echo "Invalid SOURCE_PATH=$SOURCE_PATH, exiting."
+            exit 1
+          fi
+          if [[ "${TARGET_PATH:0:1}" == "/" ]]; then
+            echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
+          else
+            echo "Invalid TARGET_PATH=$TARGET_PATH, exiting."
+            exit 1
+          fi
+
+      - name: Set Environment
+        # Prepare environment variables for the synchronization job.
+        id: env
+        env:
           AWS_DEV_ACCT: ${{ secrets.AWS_ACCT_DEV }}
           AWS_STAGE_ACCT: ${{ secrets.AWS_ACCT_STAGE }}
           AWS_PROD_ACCT: ${{ secrets.AWS_ACCT_PROD }}
+          ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
+          GHA_ROLE: ${{ inputs.GHA_ROLE }}
         run: |
-          if [ "$ENVIRONMENT" == "dev" ]; then
-            echo "ROLE=arn:aws:iam::$AWS_DEV_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
-            echo "CDN_DOMAIN=dev1.mitlibrary.net" >> $GITHUB_ENV
-          elif [ "$ENVIRONMENT" == "stage" ]; then
-            echo "ROLE=arn:aws:iam::$AWS_STAGE_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
-            echo "CDN_DOMAIN=stage.mitlibrary.net" >> $GITHUB_ENV
-          elif [ "$ENVIRONMENT" == "prod" ]; then
-            echo "ROLE=arn:aws:iam::$AWS_PROD_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
-            echo "CDN_DOMAIN=libraries.mit.edu" >> $GITHUB_ENV
-          else
-            echo "ERROR: Incorrect environment was set" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
+          case "$ENVIRONMENT" in
+            dev)
+              echo "AWS_ROLE=arn:aws:iam::$AWS_DEV_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=dev1.mitlibrary.net" >> $GITHUB_ENV
+              echo "AWS_ROLE and CDN_DOMAIN set for synchronization job to Dev1"
+            ;;
+            stage)
+              echo "AWS_ROLE=arn:aws:iam::$AWS_STAGE_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=stage.mitlibrary.net" >> $GITHUB_ENV
+              echo "AWS_ROLE and CDN_DOMAIN set for synchronization job to Stage-Workloads"
+            ;;
+            prod)
+              echo "AWS_ROLE=arn:aws:iam::$AWS_PROD_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=libraries.mit.edu" >> $GITHUB_ENV
+              echo "AWS_ROLE and CDN_DOMAIN set for synchronization job to Prod-Workloads"
+            ;;
+          esac
 
       - name: Configure AWS Credentials
         id: aws_credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ env.ROLE }}
           aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE }}
 
-      - name: Sync To Custom Domain CDN
-        # Only run this step if this is custom domain content (e.g., a folder at the root of bucket)
-        if: ${{ inputs.DOMAIN == 'custom' }}
+      - name: Get AWS Information
+        # Set the correct S3 URI for the synchronization job
+        id: aws_info
         env:
+          AWS_REGION: ${{ inputs.AWS_REGION }}
+          DOMAIN: ${{ inputs.DOMAIN }}
+          TARGET_PATH: ${{ inputs.TARGET_PATH }}
+        run: |
+          BUCKET=$(aws ssm get-parameter \
+            --region "$AWS_REGION" \
+            --name "/tfvars/libraries-website/cdn-origin-bucket-name" \
+            --query 'Parameter.Value' \
+            --output text)
+          if [[ "$DOMAIN" == "standard" ]]; then
+            echo "DISTRIBUTION_ID=$(aws ssm get-parameter \
+              --name "/tfvars/libraries-website/standard-cdn-id" \
+              --query 'Parameter.Value' \
+              --output text)" >> $GITHUB_ENV
+            echo "S3_URI=s3://$BUCKET/cdn$TARGET_PATH/" >> $GITHUB_ENV
+          else
+            echo "DISTRIBUTION_ID=$(aws ssm get-parameter \
+              --name "/tfvars/libraries-website/custom-cdn-id" \
+              --query 'Parameter.Value' \
+              --output text)" >> $GITHUB_ENV
+            echo "S3_URI=s3://$BUCKET$TARGET_PATH/" >> $GITHUB_ENV
+          fi
+
+      - name: Sync To CDN S3 Bucket
+        env:
+          S3_URI: ${{ env.S3_URI }}
+          SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
-          S3_URI: ${{ inputs.S3URI }}
         run: |
           echo "### Content synchronization to $S3_URI." >> $GITHUB_STEP_SUMMARY
-          if [ "$SYNC_PARAMS" != "" ]; then
-            aws s3 sync . $S3_URI \
+          if [[ "$S3_URI" == *"cdn/"* ]]; then
+            echo "Standard CDN content is synchronizing"
+          else
+            echo "Custom CDN content is synchronizing"
+          fi
+          cd "$GITHUB_WORKSPACE"
+          aws s3 sync "$SOURCE_PATH" "$S3_URI" \
               --delete \
               --exclude ".github/*" \
               --exclude ".git/*" \
               --exclude ".gitignore" \
               $SYNC_PARAMS
-          else
-            aws s3 sync . $S3_URI \
-              --delete \
-              --exclude ".github/*" \
-              --exclude ".git/*" 
-              --exclude ".gitignore"
-          fi
           echo "Content is synchronized to $S3_URI." >> $GITHUB_STEP_SUMMARY
-
-      - name: Sync To Standard Domain CDN
-        # Only run this step if this is standard content (e.g., a subfolder of the cdn/ folder)
-        if: ${{ inputs.DOMAIN == 'standard' }}
-        env:
-          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
-          S3_URI: ${{ inputs.S3URI }}
-        run: |
-          echo "### Content synchronization" >> $GITHUB_STEP_SUMMARY
-          if [ "$SYNC_PARAMS" != "" ]; then
-            aws s3 sync ./$(echo $S3_URI | awk -F/ '{print $5}') $S3_URI \
-              --delete \
-              --exclude ".github/*" \
-              --exclude ".git/*" \
-              --exclude ".gitignore" \
-              $SYNC_PARAMS
-          else
-            aws s3 sync ./$(echo $S3_URI | awk -F/ '{print $5}') $S3_URI \
-              --delete \
-              --exclude ".github/*" \
-              --exclude ".git/*" \
-              --exclude ".gitignore"
-          fi
-          echo "Content is synchronized to $S3_URI" >> $GITHUB_STEP_SUMMARY
 
       - name: Invalidate cache
         env:
+          CDN_DOMAIN: ${{ env.CDN_DOMAIN }}
+          DISTRIBUTION_ID: ${{ env.DISTRIBUTION_ID }}
           DOMAIN: ${{ inputs.DOMAIN }}
-          S3_URI: ${{ inputs.S3URI }}
+          TARGET_PATH: ${{ inputs.TARGET_PATH }}
         run: |
           echo "### CDN cache invalidation" >> $GITHUB_STEP_SUMMARY
-          if [ $DOMAIN == "standard" ]; then
-            DISTRIBUTION_ID=$(aws ssm get-parameter \
-              --name "/tfvars/libraries-website/standard-cdn-id" \
-              --query 'Parameter.Value' \
-              --output text)
-            INVALIDATION_ID=$(aws cloudfront create-invalidation \
-              --distribution-id $DISTRIBUTION_ID \
-              --paths "/*" \
+          echo "Start CDN Cache invalidation."
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+              --distribution-id "$DISTRIBUTION_ID" \
+              --paths "$TARGET_PATH" \
               --query 'Invalidation.Id' \
               --output text)
-            echo "Start CDN Cache invalidation"
-            aws cloudfront wait invalidation-completed \
-              --distribution-id $DISTRIBUTION_ID \
-              --id $INVALIDATION_ID
-            echo "The cache for the $(echo $S3_URI | awk -F/ '{print $5}') folder has been cleared." >> $GITHUB_STEP_SUMMARY
-            echo "The updates to https://cdn.$CDN_DOMAIN/$(echo $S3_URI | awk -F/ '{print $5}') are now available." >> $GITHUB_STEP_SUMMARY
+          aws cloudfront wait invalidation-completed \
+              --distribution-id "$DISTRIBUTION_ID" \
+              --id "$INVALIDATION_ID"
+          echo "The cache has been cleared." >> $GITHUB_STEP_SUMMARY
+          if [[ "$DOMAIN" == "standard" ]]; then
+            echo "The updates to https://cdn.$CDN_DOMAIN$TARGET_PATH are now available." >> $GITHUB_STEP_SUMMARY
           else
-            DISTRIBUTION_ID=$(aws ssm get-parameter \
-              --name "/tfvars/libraries-website/custom-cdn-id" \
-              --query 'Parameter.Value' \
-              --output text)
-            INVALIDATION_ID=$(aws cloudfront create-invalidation \
-              --distribution-id $DISTRIBUTION_ID \
-              --paths "/$(echo $S3_URI | awk -F/ '{print $5}')/*" \
-              --query 'Invalidation.Id' \
-              --output text)
-            echo "Start CDN Cache invalidation."
-            aws cloudfront wait invalidation-completed \
-              --distribution-id $DISTRIBUTION_ID \
-              --id $INVALIDATION_ID
-            echo "The cache for the $(echo $S3_URI | awk -F/ '{print $4}') site has been cleared." >> $GITHUB_STEP_SUMMARY
-            echo "The updates to the https://$(echo $S3_URI | awk -F/ '{print $4}').$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
+            echo "The updates to the https://$TARGET_PATH.$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
           fi
