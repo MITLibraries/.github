@@ -67,7 +67,10 @@ jobs:
       - name: Validate
         # Verify that the DOMAIN & ENVIRONMENT inputs are using the correct
         # values. Verify that the SOURCE_PATH and TARGET_PATH inputs are
-        # formatted correctly.
+        # formatted correctly and ensure this supports legacy caller workflows.
+        # Validate the SYNC_PARAMS input to only allow `--exclude` and 
+        # `--include` parameters and then construct a single VALID_SYNC_PARAMS
+        # environment variable with proper quoting for use in the sync step.
         id: validate
         env:
           DOMAIN: ${{ inputs.DOMAIN }}
@@ -75,6 +78,7 @@ jobs:
           SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           S3URI: ${{ inputs.S3URI }}
           TARGET_PATH: ${{ inputs.TARGET_PATH }}
+          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
         run: |
           case "$DOMAIN" in
             standard|custom)
@@ -100,6 +104,7 @@ jobs:
             echo "Invalid SOURCE_PATH=$SOURCE_PATH, exiting."
             exit 1
           fi
+
           if [[ "$S3URI" == "" ]]; then
             if [[ "${TARGET_PATH:0:1}" == "/" ]]; then
               echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
@@ -108,7 +113,7 @@ jobs:
               exit 1
             fi
           else
-            echo "Legacy caller workflow that passed ab S3_URI value."
+            echo "Legacy caller workflow that passed an S3_URI value."
             if [[ "$DOMAIN" == "standard" ]]; then
               echo "LEGACY_TARGET_PATH=/$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
               echo "LEGACY_SOURCE_PATH=$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
@@ -116,6 +121,20 @@ jobs:
               echo "LEGACY_TARGET_PATH=/$(echo "$S3URI" | awk -F/ '{print $4}')" >> $GITHUB_ENV
             fi
             echo "LEGACY=true" >> $GITHUB_ENV
+          fi
+
+          if [[ -n "$SYNC_PARAMS" ]]; then
+            temp_params="${SYNC_PARAMS//--include/}"
+            temp_params="${temp_params//--exclude/}"
+            # If there's still a -- in there, it's an invalid flag
+            if [[ $temp_params =~ -- ]]; then
+              echo "Invalid SYNC_PARAMS: only --include and --exclude parameters are allowed, exiting."
+              exit 1
+            fi
+            echo "Valid SYNC_PARAMS, proceed."
+            echo "VALID_SYNC_PARAMS=--exclude \".github/*\" --exclude \".git/*\" --exclude \".gitignore\" $SYNC_PARAMS" >> $GITHUB_ENV
+          else
+            echo "VALID_SYNC_PARAMS=--exclude \".github/*\" --exclude \".git/*\" --exclude \".gitignore\"" >> $GITHUB_ENV
           fi
 
       - name: Set Environment
@@ -153,9 +172,9 @@ jobs:
           aws-region: ${{ inputs.AWS_REGION }}
           role-to-assume: ${{ env.AWS_ROLE }}
 
-      - name: Get AWS Information
+      - name: Set S3 Target URI
         # Set the correct S3 URI for the synchronization job
-        id: aws_info
+        id: s3_target
         env:
           AWS_REGION: ${{ inputs.AWS_REGION }}
           DOMAIN: ${{ inputs.DOMAIN }}
@@ -184,7 +203,7 @@ jobs:
         env:
           S3_URI: ${{ env.S3_URI }}
           SOURCE_PATH: ${{ env.LEGACY && env.LEGACY_SOURCE_PATH || inputs.SOURCE_PATH }}
-          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
+          VALID_SYNC_PARAMS: ${{ env.VALID_SYNC_PARAMS }}
         run: |
           echo "### Content synchronization to $S3_URI." >> $GITHUB_STEP_SUMMARY
           if [[ "$S3_URI" == *"cdn/"* ]]; then
@@ -193,12 +212,9 @@ jobs:
             echo "Custom CDN content is synchronizing"
           fi
           cd "$GITHUB_WORKSPACE"
-          aws s3 sync "$SOURCE_PATH" "$S3_URI" \
-              --delete \
-              --exclude ".github/*" \
-              --exclude ".git/*" \
-              --exclude ".gitignore" \
-              $SYNC_PARAMS
+          eval "aws s3 sync \"$SOURCE_PATH\" \"$S3_URI\" \
+            --delete \
+            $VALID_SYNC_PARAMS"
           echo "Content is synchronized to $S3_URI." >> $GITHUB_STEP_SUMMARY
 
       - name: Invalidate cache
