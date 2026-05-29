@@ -53,10 +53,10 @@ defaults:
     shell: bash
 
 jobs:
-  prep:
+  publish:
     # Start with validating the inputs from the caller workflow and prepping
     # environment variables for the synchronization job.
-    name: Prep and Validate
+    name: Publish
     runs-on: ubuntu-latest
 
     steps:
@@ -73,6 +73,7 @@ jobs:
           DOMAIN: ${{ inputs.DOMAIN }}
           ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
           SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
+          S3URI: ${{ inputs.S3URI }}
           TARGET_PATH: ${{ inputs.TARGET_PATH }}
         run: |
           case "$DOMAIN" in
@@ -99,11 +100,22 @@ jobs:
             echo "Invalid SOURCE_PATH=$SOURCE_PATH, exiting."
             exit 1
           fi
-          if [[ "${TARGET_PATH:0:1}" == "/" ]]; then
-            echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
+          if [[ "$S3URI" == "" ]]; then
+            if [[ "${TARGET_PATH:0:1}" == "/" ]]; then
+              echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
+            else
+              echo "Invalid TARGET_PATH=$TARGET_PATH, exiting."
+              exit 1
+            fi
           else
-            echo "Invalid TARGET_PATH=$TARGET_PATH, exiting."
-            exit 1
+            echo "Legacy caller workflow that passed ab S3_URI value."
+            if [[ "$DOMAIN" == "standard" ]]; then
+              echo "LEGACY_TARGET_PATH=/$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
+              echo "LEGACY_SOURCE_PATH=$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
+            else
+              echo "LEGACY_TARGET_PATH=/$(echo "$S3URI" | awk -F/ '{print $4}')" >> $GITHUB_ENV
+            fi
+            echo "LEGACY=true" >> $GITHUB_ENV
           fi
 
       - name: Set Environment
@@ -147,7 +159,7 @@ jobs:
         env:
           AWS_REGION: ${{ inputs.AWS_REGION }}
           DOMAIN: ${{ inputs.DOMAIN }}
-          TARGET_PATH: ${{ inputs.TARGET_PATH }}
+          TARGET_PATH: ${{ env.LEGACY && env.LEGACY_TARGET_PATH || inputs.TARGET_PATH }}
         run: |
           BUCKET=$(aws ssm get-parameter \
             --region "$AWS_REGION" \
@@ -171,7 +183,7 @@ jobs:
       - name: Sync To CDN S3 Bucket
         env:
           S3_URI: ${{ env.S3_URI }}
-          SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
+          SOURCE_PATH: ${{ env.LEGACY && env.LEGACY_SOURCE_PATH || inputs.SOURCE_PATH }}
           SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
         run: |
           echo "### Content synchronization to $S3_URI." >> $GITHUB_STEP_SUMMARY
@@ -194,7 +206,7 @@ jobs:
           CDN_DOMAIN: ${{ env.CDN_DOMAIN }}
           DISTRIBUTION_ID: ${{ env.DISTRIBUTION_ID }}
           DOMAIN: ${{ inputs.DOMAIN }}
-          TARGET_PATH: ${{ inputs.TARGET_PATH }}
+          TARGET_PATH: ${{ env.LEGACY && env.LEGACY_TARGET_PATH || inputs.TARGET_PATH }}
         run: |
           echo "### CDN cache invalidation" >> $GITHUB_STEP_SUMMARY
           echo "Start CDN Cache invalidation."
