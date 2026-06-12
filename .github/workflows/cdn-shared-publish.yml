@@ -70,15 +70,18 @@ jobs:
         # formatted correctly and ensure this supports legacy caller workflows.
         # Validate the SYNC_PARAMS input to only allow `--exclude` and 
         # `--include` parameters and then construct a single VALID_SYNC_PARAMS
-        # environment variable with proper quoting for use in the sync step.
+        # environment variable with proper quoting for use in the sync step. 
+        # Verify that the GHA_ROLE is properly formatted as an ARN (using the 
+        # grep pattern provided by AWS)
         id: validate
         env:
           DOMAIN: ${{ inputs.DOMAIN }}
           ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
+          GHA_ROLE: ${{ inputs.GHA_ROLE }}
           SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           S3URI: ${{ inputs.S3URI }}
-          TARGET_PATH: ${{ inputs.TARGET_PATH }}
           SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
+          TARGET_PATH: ${{ inputs.TARGET_PATH }}
         run: |
           case "$DOMAIN" in
             standard|custom)
@@ -98,7 +101,7 @@ jobs:
               exit 1
             ;;
           esac
-          if [[ "${SOURCE_PATH:0:1}" == "." ]]; then
+          if [[ "${SOURCE_PATH:0:1}" == "." && "${SOURCE_PATH:0:2}" != ".." ]]; then
             echo "Valid SOURCE_PATH=$SOURCE_PATH, proceed."
           else
             echo "Invalid SOURCE_PATH=$SOURCE_PATH, exiting."
@@ -127,7 +130,7 @@ jobs:
             temp_params="${SYNC_PARAMS//--include/}"
             temp_params="${temp_params//--exclude/}"
             # If there's still a -- in there, it's an invalid flag
-            if [[ $temp_params =~ -- ]]; then
+            if [[ $temp_params =~ -- || $temp_params =~ $'\n' ]]; then
               echo "Invalid SYNC_PARAMS: only --include and --exclude parameters are allowed, exiting."
               exit 1
             fi
@@ -135,6 +138,13 @@ jobs:
             echo "VALID_SYNC_PARAMS=--exclude \".github/*\" --exclude \".git/*\" --exclude \".gitignore\" $SYNC_PARAMS" >> $GITHUB_ENV
           else
             echo "VALID_SYNC_PARAMS=--exclude \".github/*\" --exclude \".git/*\" --exclude \".gitignore\"" >> $GITHUB_ENV
+          fi
+
+          if grep -q "[a-zA-Z0-9+=,.@\-_]+" <<<< "$GHA_ROLE"; then
+            echo "Valid GHA_ROLE, proceed"
+          else
+            echo "Invalid GHA_ROLE, exiting."
+            exit 1
           fi
 
       - name: Set Environment
@@ -173,7 +183,8 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE }}
 
       - name: Set S3 Target URI
-        # Set the correct S3 URI for the synchronization job
+        # Set the correct S3 URI for the synchronization job, differentiating
+        # between the general CDN prefix and the custom domain CDN prefix
         id: s3_target
         env:
           AWS_REGION: ${{ inputs.AWS_REGION }}
@@ -200,6 +211,11 @@ jobs:
           fi
 
       - name: Sync To CDN S3 Bucket
+        # This uses a bash array to build the command in order to avoid the
+        # command injecttion risk (in light of the fact that the command needs
+        # the double-quotes around some of the parameters). We use the build-in 
+        # `read` command to split the VALID_SYNC_PARAMS into an array and then 
+        # merge the two arrays together before executing the command.
         env:
           S3_URI: ${{ env.S3_URI }}
           SOURCE_PATH: ${{ env.LEGACY && env.LEGACY_SOURCE_PATH || inputs.SOURCE_PATH }}
@@ -212,9 +228,11 @@ jobs:
             echo "Custom CDN content is synchronizing"
           fi
           cd "$GITHUB_WORKSPACE"
-          eval "aws s3 sync \"$SOURCE_PATH\" \"$S3_URI\" \
-            --delete \
-            $VALID_SYNC_PARAMS"
+          
+          aws_cmd=(aws s3 sync "$SOURCE_PATH" "$S3_URI" --delete)
+          read -ra params <<< "$VALID_SYNC_PARAMS"
+          aws_cmd+=("${params[@]}")
+          "${aws_cmd[@]}"
           echo "Content is synchronized to $S3_URI." >> $GITHUB_STEP_SUMMARY
 
       - name: Invalidate cache
@@ -228,7 +246,7 @@ jobs:
           echo "Start CDN Cache invalidation."
           INVALIDATION_ID=$(aws cloudfront create-invalidation \
               --distribution-id "$DISTRIBUTION_ID" \
-              --paths "$TARGET_PATH" \
+              --paths "${TARGET_PATH%/}/*" \
               --query 'Invalidation.Id' \
               --output text)
           aws cloudfront wait invalidation-completed \
@@ -238,5 +256,5 @@ jobs:
           if [[ "$DOMAIN" == "standard" ]]; then
             echo "The updates to https://cdn.$CDN_DOMAIN$TARGET_PATH are now available." >> $GITHUB_STEP_SUMMARY
           else
-            echo "The updates to the https://$TARGET_PATH.$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
+            echo "The updates to the https://{$TARGET_PATH#/}.$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
           fi

@@ -275,24 +275,47 @@ There are multiple static HTML repositories ([future-of-libraries](https://githu
 
 There are a number of inputs to the shared workflow, some optional and some required. Here's a summary of the inputs.
 
-- `AWS_REGION` (*string*, **optional**, default = `us-east-1`): the region where the S3 bucket lives
-- `DOMAIN` (*string*, **optional**, default = `standard`): the default value of `standard` refers to the standard CDN. If the content in question is associated with the custom domain CDN, then the caller workflow must pass the value `custom` instead of relying on the default.
-- `ENVIRONMENT` (*string*, **required**): one of `dev`, `stage`, or `prod`
-- `GHA_ROLE` (*string*, **required**): the OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
-- **[deprecated]** `S3URI` (*string*, **optional**, **no default**): the full S3 URI (including the path) where the files should be uploaded. This was the old way of handling the target for the content synchronization. The new method for handling the sources & target are handled with `SOURCE_PATH` and `TARGET_PATH` detailed below
-- `SOURCE_PATH` (*string*, **optional**, default = `.`): this is the relative path in the caller repository to the content that should be synced to the S3 bucket. The default value of `.` references the root of the repository. The combination of `SOURCE_PATH` and `TARGET_PATH` (see below) fully replace the `S3URI` input
-- `SYNC_PARAMS` (*string*, **optional**, **no default**): this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, the value for this in the workflow is `""`. This is intended to be used for adding additional `--exclude` arguments for any other files/folders in the web content repo that shouldn't be published to the S3 bucket for the site.
+- `AWS_REGION` (**optional**, *string*, default = `us-east-1`): the region where the S3 bucket lives.
+- `DOMAIN` (**optional**, *string*, default = `standard`): the default value of `standard` refers to the standard CDN. If the content in question is associated with the custom domain CDN, then the caller workflow must pass the value `custom` instead of relying on the default.
+- `ENVIRONMENT` (**required**, *string*): one of `dev`, `stage`, or `prod`.
+- `GHA_ROLE` (**required**, *string*): the OIDC role name (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository).
+- **[deprecated]** `S3URI` (**optional**, *string*, **no default**): the full S3 URI (including the path) where the files should be uploaded. This was the old way of handling the target for the content synchronization. The new method for handling the sources & target are handled with `SOURCE_PATH` and `TARGET_PATH` detailed below.
+- `SOURCE_PATH` (**optional**, *string*, default = `.`): this is the relative path in the caller repository to the content that should be synced to the S3 bucket. The default value of `.` references the root of the repository. The combination of `SOURCE_PATH` and `TARGET_PATH` (see below) fully replace the `S3URI` input.The value passed to this shared workflow must start with `./` for ensure that the path is in the repository.
+- `SYNC_PARAMS` (**optional**, *string*, **no default**): this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, the value for this in the workflow is `""`. This is intended to be used for adding additional `--exclude` (or `--include`) arguments for any other files/folders in the web content repo that shouldn't (or should) be published to the S3 bucket for the site.
   - The typical use for the web developer is to exclude additional top level folders (e.g., `--exclude "docs/*"`) or exclude the top level README (`--exclude "README.md"`).
   - It **can** be used to exclude everything except for one top level folder (e.g., `--exclude "*" --include "use_only_this_folder/*"`)
   - for more details on the additional parameters that can be used for `SYNC_PARAMS` see
     - [AWS CLI s3 reference](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/s3/index.html)
     - [AWS CLI s3 sync reference](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/s3/sync.html)
-  - The fixed behavior of this workflow is to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory
-- `TARGET_PATH` (*string*, **optional**, default = `/`): this is the prefix in the S3 bucket where the caller repository content should be synchronized. The combination of `SOURCE_PATH` (see above) and `TARGET_PATH` fully replace the `S3URI` input
+  - The workflow is already configured to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory
+- `TARGET_PATH` (**optional**, *string*, default = `/`): this is the prefix in the S3 bucket where the caller repository content should be synchronized. The combination of `SOURCE_PATH` (see above) and `TARGET_PATH` fully replace the `S3URI` input.
 
 To make life easy for the web developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
 
 **NOTE**: The `S3URI` input is deprecated (replaced by `SOURCE_PATH` and `TARGET_PATH`) and will be removed once all the legacy caller workflows are updated. The default values for `SOURCE_PATH` and `TARGET_PATH` match the behavior of the `S3URI` method.
+
+### How the workflow works
+
+#### Validation
+
+The first step runs through basic validation of the inputs to ensure that they are formatted correctly and exits the job quickly if any validation step fails. In addition to validation, this step sets two additional environment variables.
+
+1. It captures whether the caller workflow is a "legacy" call (e.g., uses the `S3_URI` input) or a "new" call (e.g., does NOT pass the `S3_URI` input) and sets a boolean in the environment to track this.
+1. It builds the correct `--include` and `--exclude` command line parameters by combing the default excludes with any additional `SYNC_PARAMS` that are passed in from the caller workflow.
+
+#### Environment
+
+The next two steps set a collection of environment variables. Since we are using one shared workflow for caller workflows that will publish to Dev, Stage, or Prod, there is work to do to set the correct target AWS Account and IAM Role for the OIDC connection to AWS. Additionally, there is work to determine whether the caller workflow is publishing to the standard CDN or to a custom domain CDN.
+
+The environment setting is broken out into two different steps (with the AWS Credentials step in the middle) because some of the environment variables are required before connecting to AWS and some of the environment variables cannot be set until information can be read from the correct AWS Account.
+
+#### Synchronization
+
+With all the environment set and the connection to AWS established, the synchronziation is straightfowrard, except for the complication needed to prevent any malicious command injection. The `aws sync ...` command is loaded into an array along with the constructed `VALID_SYNC_PARAMS` from the validation step. Then, the combined array is executed as a command (thanks to GitHub Copilot for suggesting this technique).
+
+#### Cache Invalidation
+
+Any time that content in the S3 bucket backing the CDN is updated, the currently cached content in CloudFront must be invalidated so that the cache can serve the updated files. So, the final step in the workflow runs the `aws cloudfront cache-invalidation ...` command for the appropriate path and then waits for the invalication to complete before exiting the workflow.
 
 ## Automated Lambda@Edge Deployments
 
