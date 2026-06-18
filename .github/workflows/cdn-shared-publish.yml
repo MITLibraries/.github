@@ -69,20 +69,21 @@ jobs:
         # values. Verify that the SOURCE_PATH and TARGET_PATH inputs are
         # formatted correctly and ensure this supports legacy caller workflows.
         # Validate the SYNC_PARAMS input to only allow `--exclude` and 
-        # `--include` parameters and then construct a single VALID_SYNC_PARAMS
-        # environment variable with proper quoting for use in the sync step. 
-        # Verify that the GHA_ROLE is properly formatted as an ARN (using the 
-        # grep pattern provided by AWS)
+        # `--include` parameters. Verify that the GHA_ROLE is properly formatted
+        # for an IAM Role name (using a more tightly restricted regex pattern
+        # than AWS that matches our naming scheme: lettters, numbers, hyphens,
+        # underscores).
         id: validate
         env:
           DOMAIN: ${{ inputs.DOMAIN }}
           ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
           GHA_ROLE: ${{ inputs.GHA_ROLE }}
-          SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           S3URI: ${{ inputs.S3URI }}
+          SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
           TARGET_PATH: ${{ inputs.TARGET_PATH }}
         run: |
+          # Only "standard" or "custom" are allowed values for DOMAIN
           case "$DOMAIN" in
             standard|custom)
               echo "Valid DOMAIN=$DOMAIN input, proceed."
@@ -92,6 +93,8 @@ jobs:
               exit 1
             ;;
           esac
+
+          # Only "dev", "stage", or "prod" are allowed values for ENVIRONMENT
           case "$ENVIRONMENT" in
             dev|stage|prod)
               echo "Valid ENVIRONMENT=$ENVIRONMENT input, proceed."
@@ -101,6 +104,8 @@ jobs:
               exit 1
             ;;
           esac
+
+          # Ensure SOURCE_PATH is a relative path starting with "." and not ".."
           if [[ "${SOURCE_PATH:0:1}" == "." && "${SOURCE_PATH:0:2}" != ".." ]]; then
             echo "Valid SOURCE_PATH=$SOURCE_PATH, proceed."
           else
@@ -108,6 +113,8 @@ jobs:
             exit 1
           fi
 
+          # Check for "legacy" caller workflow that passes S3URI and set booleans
+          # and paths for later steps
           if [[ "$S3URI" == "" ]]; then
             if [[ "${TARGET_PATH:0:1}" == "/" ]]; then
               echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
@@ -116,7 +123,7 @@ jobs:
               exit 1
             fi
           else
-            echo "Legacy caller workflow that passed an S3_URI value."
+            echo "Legacy caller workflow passed an S3URI value."
             if [[ "$DOMAIN" == "standard" ]]; then
               echo "LEGACY_TARGET_PATH=/$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
               echo "LEGACY_SOURCE_PATH=$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
@@ -126,6 +133,7 @@ jobs:
             echo "LEGACY=true" >> $GITHUB_ENV
           fi
 
+          # Ensure that SYNC_PARAMS input only has `--include` and `--exclude` options
           if [[ -n "$SYNC_PARAMS" ]]; then
             temp_params="${SYNC_PARAMS//--include/}"
             temp_params="${temp_params//--exclude/}"
@@ -135,12 +143,12 @@ jobs:
               exit 1
             fi
             echo "Valid SYNC_PARAMS, proceed."
-            echo "VALID_SYNC_PARAMS=--exclude \".github/*\" --exclude \".git/*\" --exclude \".gitignore\" $SYNC_PARAMS" >> $GITHUB_ENV
           else
-            echo "VALID_SYNC_PARAMS=--exclude \".github/*\" --exclude \".git/*\" --exclude \".gitignore\"" >> $GITHUB_ENV
+            echo "No additional SYNC_PARAMS, proceed."
           fi
 
-          if grep -q "[a-zA-Z0-9+=,.@\-_]+" <<<< "$GHA_ROLE"; then
+          # Validate GHA_ROLE is a proper IAM Role name
+          if [[ "$GHA_ROLE" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
             echo "Valid GHA_ROLE, proceed"
           else
             echo "Invalid GHA_ROLE, exiting."
@@ -191,6 +199,8 @@ jobs:
           DOMAIN: ${{ inputs.DOMAIN }}
           TARGET_PATH: ${{ env.LEGACY && env.LEGACY_TARGET_PATH || inputs.TARGET_PATH }}
         run: |
+          # Using values from SSM Parameter Store, construct the properly formatted
+          # S3 URI value for the synchronization step
           BUCKET=$(aws ssm get-parameter \
             --region "$AWS_REGION" \
             --name "/tfvars/libraries-website/cdn-origin-bucket-name" \
@@ -201,39 +211,51 @@ jobs:
               --name "/tfvars/libraries-website/standard-cdn-id" \
               --query 'Parameter.Value' \
               --output text)" >> $GITHUB_ENV
-            echo "S3_URI=s3://$BUCKET/cdn$TARGET_PATH/" >> $GITHUB_ENV
+            echo "S3URI=s3://$BUCKET/cdn$TARGET_PATH/" >> $GITHUB_ENV
           else
             echo "DISTRIBUTION_ID=$(aws ssm get-parameter \
               --name "/tfvars/libraries-website/custom-cdn-id" \
               --query 'Parameter.Value' \
               --output text)" >> $GITHUB_ENV
-            echo "S3_URI=s3://$BUCKET$TARGET_PATH/" >> $GITHUB_ENV
+            echo "S3URI=s3://$BUCKET$TARGET_PATH/" >> $GITHUB_ENV
           fi
 
       - name: Sync To CDN S3 Bucket
         # This uses a bash array to build the command in order to avoid the
-        # command injecttion risk (in light of the fact that the command needs
-        # the double-quotes around some of the parameters). We use the build-in 
-        # `read` command to split the VALID_SYNC_PARAMS into an array and then 
-        # merge the two arrays together before executing the command.
+        # command injection risk.
         env:
-          S3_URI: ${{ env.S3_URI }}
+          S3URI: ${{ env.S3URI }}
           SOURCE_PATH: ${{ env.LEGACY && env.LEGACY_SOURCE_PATH || inputs.SOURCE_PATH }}
-          VALID_SYNC_PARAMS: ${{ env.VALID_SYNC_PARAMS }}
+          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
         run: |
-          echo "### Content synchronization to $S3_URI." >> $GITHUB_STEP_SUMMARY
-          if [[ "$S3_URI" == *"cdn/"* ]]; then
+          echo "### Content synchronization to $S3URI." >> $GITHUB_STEP_SUMMARY
+          if [[ "$S3URI" == *"cdn/"* ]]; then
             echo "Standard CDN content is synchronizing"
           else
             echo "Custom CDN content is synchronizing"
           fi
           cd "$GITHUB_WORKSPACE"
           
-          aws_cmd=(aws s3 sync "$SOURCE_PATH" "$S3_URI" --delete)
-          read -ra params <<< "$VALID_SYNC_PARAMS"
-          aws_cmd+=("${params[@]}")
-          "${aws_cmd[@]}"
-          echo "Content is synchronized to $S3_URI." >> $GITHUB_STEP_SUMMARY
+          # Build an array with the default command line parameters for the sync command
+          sync_cmd=(
+            "$SOURCE_PATH"
+            "$S3URI"
+            --delete
+            --exclude ".github/*"
+            --exclude ".git/*"
+            --exclude ".gitignore"
+          )
+          
+          # Parse the previously validated SYNC_PARAMS input into the array, without any
+          # glob expansion.
+          if [[ -n "$SYNC_PARAMS" ]]; then
+            readarray -d '' -t extra_params \
+              < <(printf '%s' "$SYNC_PARAMS" | xargs printf '%s\0')
+            sync_cmd+=("${extra_params[@]}")
+          fi
+
+          aws s3 sync "${sync_cmd[@]}"
+          echo "Content is synchronized to $S3URI." >> $GITHUB_STEP_SUMMARY
 
       - name: Invalidate cache
         env:
@@ -256,5 +278,5 @@ jobs:
           if [[ "$DOMAIN" == "standard" ]]; then
             echo "The updates to https://cdn.$CDN_DOMAIN$TARGET_PATH are now available." >> $GITHUB_STEP_SUMMARY
           else
-            echo "The updates to the https://{$TARGET_PATH#/}.$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
+            echo "The updates to the https://${TARGET_PATH#/}.$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
           fi

@@ -280,7 +280,7 @@ There are a number of inputs to the shared workflow, some optional and some requ
 - `ENVIRONMENT` (**required**, *string*): one of `dev`, `stage`, or `prod`.
 - `GHA_ROLE` (**required**, *string*): the OIDC role name (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository).
 - **[deprecated]** `S3URI` (**optional**, *string*, **no default**): the full S3 URI (including the path) where the files should be uploaded. This was the old way of handling the target for the content synchronization. The new method for handling the sources & target are handled with `SOURCE_PATH` and `TARGET_PATH` detailed below.
-- `SOURCE_PATH` (**optional**, *string*, default = `.`): this is the relative path in the caller repository to the content that should be synced to the S3 bucket. The default value of `.` references the root of the repository. The combination of `SOURCE_PATH` and `TARGET_PATH` (see below) fully replace the `S3URI` input.The value passed to this shared workflow must start with `./` for ensure that the path is in the repository.
+- `SOURCE_PATH` (**optional**, *string*, default = `.`): this is the relative path in the caller repository to the content that should be synced to the S3 bucket. The default value of `.` references the root of the repository. The combination of `SOURCE_PATH` and `TARGET_PATH` (see below) fully replace the `S3URI` input. The value passed to this shared workflow must start with `.` (e.g., `.` or `./path`) and must **not** start with `..` for ensure that the path stays within the repository.
 - `SYNC_PARAMS` (**optional**, *string*, **no default**): this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, the value for this in the workflow is `""`. This is intended to be used for adding additional `--exclude` (or `--include`) arguments for any other files/folders in the web content repo that shouldn't (or should) be published to the S3 bucket for the site.
   - The typical use for the web developer is to exclude additional top level folders (e.g., `--exclude "docs/*"`) or exclude the top level README (`--exclude "README.md"`).
   - It **can** be used to exclude everything except for one top level folder (e.g., `--exclude "*" --include "use_only_this_folder/*"`)
@@ -298,10 +298,18 @@ To make life easy for the web developers, the [mitlib-tf-workloads-libraries-web
 
 #### Validation
 
-The first step runs through basic validation of the inputs to ensure that they are formatted correctly and exits the job quickly if any validation step fails. In addition to validation, this step sets two additional environment variables.
+The first step runs through basic validation of the inputs to ensure that they are formatted correctly and exits the job quickly if any validation step fails. In addition to validation, this step sets an additional environment variable: it captures whether the caller workflow is a "legacy" call (e.g., uses the `S3URI` input) or a "new" call (e.g., does NOT pass the `S3URI` input) and sets a boolean in the environment to track this. At the same time, it ensures that the `LEGACY_SOURCE_PATH` and `LEGACY_TARGET_PATH` are formatted correctly (starting with a `/` and ensuring no trailing `/` at the end).
 
-1. It captures whether the caller workflow is a "legacy" call (e.g., uses the `S3_URI` input) or a "new" call (e.g., does NOT pass the `S3_URI` input) and sets a boolean in the environment to track this.
-1. It builds the correct `--include` and `--exclude` command line parameters by combing the default excludes with any additional `SYNC_PARAMS` that are passed in from the caller workflow.
+In subsequent steps that have either `SOURCE_PATH` or `TARGET_PATH` declared as environment variables, the boolean is checked and then either the input value or the constructed "legacy" value is set in the environment for the step. For example:
+
+```yaml
+      - name: <Name of Step>
+        env:
+          ...
+          SOURCE_PATH: ${{ env.LEGACY && env.LEGACY_SOURCE_PATH || inputs.SOURCE_PATH }}
+          TARGET_PATH: ${{ env.LEGACY && env.LEGACY_TARGET_PATH || inputs.TARGET_PATH }}
+          ...
+```
 
 #### Environment
 
@@ -311,11 +319,11 @@ The environment setting is broken out into two different steps (with the AWS Cre
 
 #### Synchronization
 
-With all the environment set and the connection to AWS established, the synchronziation is straightfowrard, except for the complication needed to prevent any malicious command injection. The `aws sync ...` command is loaded into an array along with the constructed `VALID_SYNC_PARAMS` from the validation step. Then, the combined array is executed as a command (thanks to GitHub Copilot for suggesting this technique).
+With all the environment set and the connection to AWS established, the synchronization is straightforward, except for the complication needed to prevent any malicious command injection. The `aws s3 sync` command parameters are loaded into an array. Then, the validated `SYNC_PARAMS` input are parsed into the array using a combination of `readarray`, `printf`, and `xargs` to prevent any glob expansion for `*` values. Finally, the combined array is executed as a command.
 
 #### Cache Invalidation
 
-Any time that content in the S3 bucket backing the CDN is updated, the currently cached content in CloudFront must be invalidated so that the cache can serve the updated files. So, the final step in the workflow runs the `aws cloudfront cache-invalidation ...` command for the appropriate path and then waits for the invalication to complete before exiting the workflow.
+Any time that content in the S3 bucket backing the CDN is updated, the currently cached content in CloudFront must be invalidated so that the cache can serve the updated files. So, the final step in the workflow runs the `aws cloudfront cache-invalidation ...` command for the appropriate path and then waits for the invalidation to complete before exiting the workflow.
 
 ## Automated Lambda@Edge Deployments
 
