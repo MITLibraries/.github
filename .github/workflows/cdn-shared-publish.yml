@@ -71,7 +71,7 @@ jobs:
         # Validate the SYNC_PARAMS input to only allow `--exclude` and 
         # `--include` parameters. Verify that the GHA_ROLE is properly formatted
         # for an IAM Role name (using a more tightly restricted regex pattern
-        # than AWS that matches our naming scheme: lettters, numbers, hyphens,
+        # than AWS that matches our naming scheme: letters, numbers, hyphens,
         # underscores).
         id: validate
         env:
@@ -82,6 +82,7 @@ jobs:
           SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
           TARGET_PATH: ${{ inputs.TARGET_PATH }}
+          WORKSPACE_PATH: ${{ github.workspace }}
         run: |
           # Only "standard" or "custom" are allowed values for DOMAIN
           case "$DOMAIN" in
@@ -105,22 +106,34 @@ jobs:
             ;;
           esac
 
-          # Ensure SOURCE_PATH is a relative path starting with "." and not ".."
-          if [[ "${SOURCE_PATH:0:1}" == "." && "${SOURCE_PATH:0:2}" != ".." ]]; then
-            echo "Valid SOURCE_PATH=$SOURCE_PATH, proceed."
-          else
-            echo "Invalid SOURCE_PATH=$SOURCE_PATH, exiting."
+          # Ensure SOURCE_PATH is a relative path starting with "." and exists in the repository
+          if [[ "${SOURCE_PATH:0:1}" != "." ]]; then
+            echo "Invalid. The SOURCE_PATH must begin with a '.'"
             exit 1
+          fi
+          ABSOLUTE_PATH=$(realpath -e ${WORKSPACE_PATH}/${SOURCE_PATH} 2>/dev/null)
+          REPO_PATH=$(realpath -e ${WORKSPACE_PATH} 2>/dev/null)
+          if [[ $? -ne 0 ]]; then
+            echo "Invalid. The SOURCE_PATH does not exist."
+            exit 1
+          elif [[ ! "$ABSOLUTE_PATH" =~ ^"${REPO_PATH}"(/|$) ]]; then
+            echo "Invalid. The SOURCE_PATH is not within the repository!"
+            exit 1
+          else
+            echo "Valid SOURCE_PATH=$SOURCE_PATH, proceed."
           fi
 
           # Check for "legacy" caller workflow that passes S3URI and set booleans
-          # and paths for later steps
+          # and paths for later steps.
           if [[ "$S3URI" == "" ]]; then
-            if [[ "${TARGET_PATH:0:1}" == "/" ]]; then
-              echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
-            else
-              echo "Invalid TARGET_PATH=$TARGET_PATH, exiting."
+            if [[ "${TARGET_PATH:0:1}" != "/" ]]; then
+              echo "Invalid TARGET_PATH=$TARGET_PATH does not start with '/', exiting."
               exit 1
+            elif [[ "$TARGET_PATH" == "/" && "$DOMAIN" == "custom" ]]; then
+              echo "Invalid TARGET_PATH=$TARGET_PATH cannot be just '/' for custom domain, exiting."
+              exit 1
+            else
+              echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
             fi
           else
             echo "Legacy caller workflow passed an S3URI value."
@@ -138,7 +151,7 @@ jobs:
             temp_params="${SYNC_PARAMS//--include/}"
             temp_params="${temp_params//--exclude/}"
             # If there's still a -- in there, it's an invalid flag
-            if [[ $temp_params =~ -- || $temp_params =~ $'\n' ]]; then
+            if [[ $temp_params =~ -- || $temp_params =~ $'\n' || $temp_params =~ $'\r' ]]; then
               echo "Invalid SYNC_PARAMS: only --include and --exclude parameters are allowed, exiting."
               exit 1
             fi

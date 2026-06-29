@@ -292,7 +292,7 @@ There are a number of inputs to the shared workflow, some optional and some requ
 
 To make life easy for the web developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
 
-**NOTE**: The `S3URI` input is deprecated (replaced by `SOURCE_PATH` and `TARGET_PATH`) and will be removed once all the legacy caller workflows are updated. The default values for `SOURCE_PATH` and `TARGET_PATH` match the behavior of the `S3URI` method.
+**NOTE**: The `S3URI` input is deprecated (replaced by `SOURCE_PATH` and `TARGET_PATH`) and will be removed once all the legacy caller workflows are updated. For legacy workflows, the `SOURCE_PATH` and `TARGET_PATH` are derived from the `S3URI` value.
 
 ### How the workflow works
 
@@ -323,7 +323,7 @@ With all the environment set and the connection to AWS established, the synchron
 
 #### Cache Invalidation
 
-Any time that content in the S3 bucket backing the CDN is updated, the currently cached content in CloudFront must be invalidated so that the cache can serve the updated files. So, the final step in the workflow runs the `aws cloudfront cache-invalidation ...` command for the appropriate path and then waits for the invalidation to complete before exiting the workflow.
+Any time that content in the S3 bucket backing the CDN is updated, the currently cached content in CloudFront must be invalidated so that the cache can serve the updated files. So, the final step in the workflow runs the `aws cloudfront create-invalidation ...` command for the appropriate path and then waits for the invalidation to complete before exiting the workflow.
 
 ## Automated Lambda@Edge Deployments
 
