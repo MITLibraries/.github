@@ -111,32 +111,38 @@ jobs:
             echo "Invalid. The SOURCE_PATH must begin with a '.'"
             exit 1
           fi
-          ABSOLUTE_PATH=$(realpath -e ${WORKSPACE_PATH}/${SOURCE_PATH} 2>/dev/null)
-          REPO_PATH=$(realpath -e ${WORKSPACE_PATH} 2>/dev/null)
+          REPO_PATH=$(realpath -e "${WORKSPACE_PATH}" 2>/dev/null)
+          ABSOLUTE_PATH=$(realpath -e "${WORKSPACE_PATH}/${SOURCE_PATH}" 2>/dev/null)
           if [[ $? -ne 0 ]]; then
             echo "Invalid. The SOURCE_PATH does not exist."
             exit 1
-          elif [[ ! "$ABSOLUTE_PATH" =~ ^"${REPO_PATH}"(/|$) ]]; then
+          elif [[ ! "${ABSOLUTE_PATH}" =~ ^"${REPO_PATH}"(/|$) ]]; then
             echo "Invalid. The SOURCE_PATH is not within the repository!"
             exit 1
           else
-            echo "Valid SOURCE_PATH=$SOURCE_PATH, proceed."
+            echo "Valid SOURCE_PATH=${SOURCE_PATH}, proceed."
           fi
 
           # Check for "legacy" caller workflow that passes S3URI and set booleans
           # and paths for later steps.
           if [[ "$S3URI" == "" ]]; then
             if [[ "${TARGET_PATH:0:1}" != "/" ]]; then
-              echo "Invalid TARGET_PATH=$TARGET_PATH does not start with '/', exiting."
+              echo "Invalid TARGET_PATH=${TARGET_PATH} does not start with '/', exiting."
               exit 1
-            elif [[ "$TARGET_PATH" == "/" && "$DOMAIN" == "custom" ]]; then
-              echo "Invalid TARGET_PATH=$TARGET_PATH cannot be just '/' for custom domain, exiting."
+            elif [[ "${TARGET_PATH}" == "/" && "$DOMAIN" == "custom" ]]; then
+              echo "Invalid TARGET_PATH=${TARGET_PATH} cannot be just '/' for custom domain, exiting."
               exit 1
             else
-              echo "Valid TARGET_PATH=$TARGET_PATH, proceed."
+              echo "Valid TARGET_PATH=${TARGET_PATH}, proceed."
             fi
           else
             echo "Legacy caller workflow passed an S3URI value."
+            if [[ ! "S3URI" =~ ^s3://[a-z0-9._-]+(/[^/]+)+/$ ]]; then
+              echo "Invalid S3URI format"
+              exit 1
+            else
+              echo "Properly formatted S3URI=${S3URI}, proceeding."
+            fi
             if [[ "$DOMAIN" == "standard" ]]; then
               echo "LEGACY_TARGET_PATH=/$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
               echo "LEGACY_SOURCE_PATH=$(echo "$S3URI" | awk -F/ '{print $5}')" >> $GITHUB_ENV
@@ -148,14 +154,14 @@ jobs:
 
           # Ensure that SYNC_PARAMS input only has `--include` and `--exclude` options
           if [[ -n "$SYNC_PARAMS" ]]; then
-            temp_params="${SYNC_PARAMS//--include/}"
-            temp_params="${temp_params//--exclude/}"
+            TEMP_PARAMS="${SYNC_PARAMS//--include/}"
+            TEMP_PARAMS="${TEMP_PARAMS//--exclude/}"
             # If there's still a -- in there, it's an invalid flag
-            if [[ $temp_params =~ -- || $temp_params =~ $'\n' || $temp_params =~ $'\r' ]]; then
+            if [[ $TEMP_PARAMS =~ -- || $TEMP_PARAMS =~ $'\n' || $TEMP_PARAMS =~ $'\r' ]]; then
               echo "Invalid SYNC_PARAMS: only --include and --exclude parameters are allowed, exiting."
               exit 1
             fi
-            echo "Valid SYNC_PARAMS, proceed."
+            echo "Valid SYNC_PARAMS=${SYNC_PARAMS}, proceed."
           else
             echo "No additional SYNC_PARAMS, proceed."
           fi
@@ -215,22 +221,24 @@ jobs:
           # Using values from SSM Parameter Store, construct the properly formatted
           # S3 URI value for the synchronization step
           BUCKET=$(aws ssm get-parameter \
-            --region "$AWS_REGION" \
+            --region ${AWS_REGION} \
             --name "/tfvars/libraries-website/cdn-origin-bucket-name" \
             --query 'Parameter.Value' \
             --output text)
           if [[ "$DOMAIN" == "standard" ]]; then
             echo "DISTRIBUTION_ID=$(aws ssm get-parameter \
-              --name "/tfvars/libraries-website/standard-cdn-id" \
+              --region ${AWS_REGION} \
+              --name '/tfvars/libraries-website/standard-cdn-id' \
               --query 'Parameter.Value' \
               --output text)" >> $GITHUB_ENV
-            echo "S3URI=s3://$BUCKET/cdn$TARGET_PATH/" >> $GITHUB_ENV
+            echo "S3URI=s3://${BUCKET}/cdn${TARGET_PATH%/}" >> $GITHUB_ENV
           else
             echo "DISTRIBUTION_ID=$(aws ssm get-parameter \
-              --name "/tfvars/libraries-website/custom-cdn-id" \
+              --region ${AWS_REGION} \
+              --name '/tfvars/libraries-website/custom-cdn-id' \
               --query 'Parameter.Value' \
               --output text)" >> $GITHUB_ENV
-            echo "S3URI=s3://$BUCKET$TARGET_PATH/" >> $GITHUB_ENV
+            echo "S3URI=s3://${BUCKET}${TARGET_PATH%/}" >> $GITHUB_ENV
           fi
 
       - name: Sync To CDN S3 Bucket
@@ -251,8 +259,8 @@ jobs:
           
           # Build an array with the default command line parameters for the sync command
           sync_cmd=(
-            "$SOURCE_PATH"
-            "$S3URI"
+            "${SOURCE_PATH}"
+            "${S3URI}"
             --delete
             --exclude ".github/*"
             --exclude ".git/*"
@@ -289,7 +297,7 @@ jobs:
               --id "$INVALIDATION_ID"
           echo "The cache has been cleared." >> $GITHUB_STEP_SUMMARY
           if [[ "$DOMAIN" == "standard" ]]; then
-            echo "The updates to https://cdn.$CDN_DOMAIN$TARGET_PATH are now available." >> $GITHUB_STEP_SUMMARY
+            echo "The updates to https://cdn.${CDN_DOMAIN}${TARGET_PATH#/} are now available." >> $GITHUB_STEP_SUMMARY
           else
-            echo "The updates to the https://${TARGET_PATH#/}.$CDN_DOMAIN site are now available." >> $GITHUB_STEP_SUMMARY
+            echo "The updates to the https://${TARGET_PATH#/}.${CDN_DOMAIN} site are now available." >> $GITHUB_STEP_SUMMARY
           fi
