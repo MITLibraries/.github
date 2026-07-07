@@ -1,0 +1,220 @@
+# Shared workflow for publishing content to the Standard CloudFront Distribution
+name: Publish To Standard Distribution
+
+on:
+  workflow_call:
+    inputs:
+      AWS_REGION:
+        description: "Region for AWS resources."
+        required: false
+        type: string
+        default: us-east-1
+      ENVIRONMENT:
+        description: "The AWS environment where the resources will be deployed."
+        required: true
+        type: string
+      GHA_ROLE:
+        description: "The IAM Role linked to the OIDC connection."
+        required: true
+        type: string
+      SOURCE_PATH:
+        description: "The path in the caller repository containing the files to sync to the S3 bucket (format: folder/in/repo)."
+        required: true
+        type: string
+      SYNC_PARAMS:
+        description: "Additional parameters for the aws s3 sync command, specific to the caller repository."
+        required: false
+        type: string
+      TARGET_PATH:
+        description: "The prefix in the S3 bucket to which the repository files should be synced (format: /cdn/path/to/folder/)."
+        required: true
+        type: string
+
+permissions:
+  # These are the minimum permissions to allow for OIDC connection to AWS
+  id-token: write
+  contents: read
+
+# Set defaults
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate
+        id: validate
+        env:
+          ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
+          GHA_ROLE: ${{ inputs.GHA_ROLE }}
+          SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
+          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
+          TARGET_PATH: ${{ inputs.TARGET_PATH }}
+          WORKSPACE_PATH: ${{ github.workspace }}
+        run: |
+          # Only "dev", "stage", or "prod" are allowed values for ENVIRONMENT
+          case "$ENVIRONMENT" in
+            dev|stage|prod)
+              echo "Valid ENVIRONMENT=$ENVIRONMENT input, proceed."
+            ;;
+            *)
+              echo "Invalid ENVIRONMENT=$ENVIRONMENT input, exiting."
+              exit 1
+            ;;
+          esac
+
+          # Validate GHA_ROLE is a proper IAM Role name
+          if [[ "$GHA_ROLE" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+            echo "Valid GHA_ROLE, proceed"
+          else
+            echo "Invalid GHA_ROLE, exiting."
+            exit 1
+          fi
+
+          # Validate SOURCE_PATH is actually in the repository
+          if [[ ${SOURCE_PATH:0:1} == "/" ]]; then
+            echo "Invalid. No absolute paths allowed!"
+            exit 1
+          fi
+          REPO_PATH=$(realpath -e ${WORKSPACE_PATH})
+          ABSOLUTE_PATH=$(realpath -e ${WORKSPACE_PATH}/${SOURCE_PATH})
+          if [[ $? -ne 0 ]]; then
+            echo "Invalid. The SOURCE_PATH does not exist."
+            exit 1
+          elif [[ ! "${ABSOLUTE_PATH}" =~ ^"${REPO_PATH}"(/|$) ]]; then
+            echo "Invalid. The SOURCE_PATH is not within the repository!"
+            exit 1
+          else
+            echo "Valid SOURCE_PATH=${SOURCE_PATH}, proceed."
+          fi
+
+          # Ensure that SYNC_PARAMS input only has `--include` and `--exclude` options
+          if [[ -n "$SYNC_PARAMS" ]]; then
+            TEMP_PARAMS="${SYNC_PARAMS//--include/}"
+            TEMP_PARAMS="${TEMP_PARAMS//--exclude/}"
+            # If there's still a -- in there, it's an invalid flag
+            if [[ $TEMP_PARAMS =~ -- || $TEMP_PARAMS =~ $'\n' || $TEMP_PARAMS =~ $'\r' ]]; then
+              echo "Invalid SYNC_PARAMS: only --include and --exclude parameters are allowed, exiting."
+              exit 1
+            fi
+            echo "Valid SYNC_PARAMS=${SYNC_PARAMS}, proceed."
+          else
+            echo "No additional SYNC_PARAMS, proceed."
+          fi
+
+          # Ensure that the TARGET_PATH is inside the cdn/ prefix
+          if [[ ${TARGET_PATH} =~ ^/cdn/[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*/$ ]]; then
+            echo "Valid. The TARGET_PATH=${TARGET_PATH} is in the /cdn/ prefix."
+          else
+            echo "Invalid. The TARGET_PATH is not formatted correctly"
+            exit 1
+          fi
+
+      - name: Set Environment
+        id: env
+        env:
+          AWS_DEV_ACCT: ${{ secrets.AWS_ACCT_DEV }}
+          AWS_STAGE_ACCT: ${{ secrets.AWS_ACCT_STAGE }}
+          AWS_PROD_ACCT: ${{ secrets.AWS_ACCT_PROD }}
+          ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
+          GHA_ROLE: ${{ inputs.GHA_ROLE }}
+        run: |
+          case "$ENVIRONMENT" in
+            dev)
+              echo "AWS_ROLE=arn:aws:iam::$AWS_DEV_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=dev1.mitlibrary.net" >> $GITHUB_ENV
+              echo "AWS_ROLE and CDN_DOMAIN set for synchronization job to Dev1"
+            ;;
+            stage)
+              echo "AWS_ROLE=arn:aws:iam::$AWS_STAGE_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=stage.mitlibrary.net" >> $GITHUB_ENV
+              echo "AWS_ROLE and CDN_DOMAIN set for synchronization job to Stage-Workloads"
+            ;;
+            prod)
+              echo "AWS_ROLE=arn:aws:iam::$AWS_PROD_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=libraries.mit.edu" >> $GITHUB_ENV
+              echo "AWS_ROLE and CDN_DOMAIN set for synchronization job to Prod-Workloads"
+            ;;
+          esac
+
+      - name: Configure AWS Credentials
+        id: aws_credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE }}
+
+      - name: Set S3 Target URI
+        id: s3_target
+        env:
+          AWS_REGION: ${{ inputs.AWS_REGION }}
+          TARGET_PATH: ${{ inputs.TARGET_PATH }}
+        run: |
+          # Using values from SSM Parameter Store, construct the properly formatted
+          # S3 URI value for the synchronization step
+          BUCKET=$(aws ssm get-parameter \
+            --region ${AWS_REGION} \
+            --name "/tfvars/libraries-website/cdn-origin-bucket-name" \
+            --query 'Parameter.Value' \
+            --output text)
+          echo "DISTRIBUTION_ID=$(aws ssm get-parameter \
+            --region ${AWS_REGION} \
+            --name '/tfvars/libraries-website/standard-cdn-id' \
+            --query 'Parameter.Value' \
+            --output text)" >> $GITHUB_ENV
+          echo "S3URI=s3://${BUCKET}${TARGET_PATH%/}" >> $GITHUB_ENV
+
+      - name: Sync to S3 Origin
+        env:
+          S3URI: ${{ env.S3URI }}
+          SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
+          SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
+        run: |
+          echo "### Content synchronization to $S3URI." >> $GITHUB_STEP_SUMMARY
+          cd "$GITHUB_WORKSPACE"
+
+          # Build an array with the default command line parameters for the sync command
+          sync_cmd=(
+            "${SOURCE_PATH}"
+            "${S3URI}"
+            --delete
+            --exclude ".github/*"
+            --exclude ".git/*"
+            --exclude ".gitignore"
+          )
+          
+          # Parse the previously validated SYNC_PARAMS input into the array, without any
+          # glob expansion.
+          if [[ -n "$SYNC_PARAMS" ]]; then
+            readarray -d '' -t extra_params \
+              < <(printf '%s' "$SYNC_PARAMS" | xargs printf '%s\0')
+            sync_cmd+=("${extra_params[@]}")
+          fi
+
+          aws s3 sync "${sync_cmd[@]}"
+          echo "Content is synchronized to $S3URI." >> $GITHUB_STEP_SUMMARY
+
+      - name: Invalidate Cache
+        env:
+          CDN_DOMAIN: ${{ env.CDN_DOMAIN }}
+          DISTRIBUTION_ID: ${{ env.DISTRIBUTION_ID }}
+          TARGET_PATH: ${{ inputs.TARGET_PATH }}
+        run: |
+          echo "### CDN cache invalidation" >> $GITHUB_STEP_SUMMARY
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+              --distribution-id "$DISTRIBUTION_ID" \
+              --paths "${TARGET_PATH%/}/*" \
+              --query 'Invalidation.Id' \
+              --output text)
+          aws cloudfront wait invalidation-completed \
+              --distribution-id "$DISTRIBUTION_ID" \
+              --id "$INVALIDATION_ID"
+          echo "The cache has been cleared." >> $GITHUB_STEP_SUMMARY
+          echo "The updates to https://cdn.${CDN_DOMAIN}${TARGET_PATH#/cdn} are now available." >> $GITHUB_STEP_SUMMARY
