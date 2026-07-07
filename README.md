@@ -264,14 +264,14 @@ The container that is pushed to the AWS ECR Repository in Prod is tagged with
 
 It also assumes that the appropriate infrastructure is in place, particularly the OIDC configuration and IAM role for Github Actions to connect to AWS. In most cases, this is handled by the [mitlib-tf-workloads-ecr](https://github.com/mitlibraries/mitlib-tf-workloads-ecr) repository. That same repository generates the GHA workflow files for each ECR repository so that they can be copied from Terraform Cloud into the application repository.
 
-## Automated Publishing to CDN
+## DEPRECATED: Automated Publishing to CDN
 
 There are multiple static HTML repositories (future-of-libraries and open-access-task-force) that will benefit from automated publishing to the S3-based CDN in our AWS Organization. The publishing automation (for both stage & prod) is handled by one shared workflow, [cdn-shared-publish.yml](./.github/workflows/cdn-shared-publish.yml), that covers all three tiers (dev/stage/prod) as well as both the standard CDN and the custom domain CDN.
 
 This workflow assumes that the calling repository is structured in a very particular way!
 
 - For custom domain repos, all the content to be published to the `<folder_name>` folder in the S3 bucket **must** live at the root of the repository.
-- For standard domain repos, all the content to be published to the `cdn/<folder_name>` folder in the S3 bucket **must** live in a top level folder named `<folder_name>`. 
+- For standard domain repos, all the content to be published to the `cdn/<folder_name>` folder in the S3 bucket **must** live in a top level folder named `<folder_name>`.
   - For a custom domain example see [future-of-libraries-static](https://github.com/mitlibraries/future-of-libraries-static).
   - For a standard CDN example see [web-images-static](https://github.com/mitlibraries/web-images-static).
 
@@ -293,6 +293,78 @@ The following values must be passed in to the shared workflow from the caller wo
 - `S3URI` (*string*, **required**): the full S3 URI (including the path) where the files should be uploaded
 
 To make life easy for the web developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
+
+## Automated Publishing to CloudFront Distributions
+
+There are multiple static HTML repositories (future-of-libraries-static, grandchallenges-static, web-images-static) that benefit from automated publishing to the S3-based CloudFront distributions in our AWS Organization. The publishing automation is handled by one shared workflow, [cdn-publish-shared.yml](./.github/workflows/cdn-publish-shared.yml), that covers all three tiers (dev/stage/prod) as well as both the standard distribution in CloudFront and the custom domain distribution in CloudFront.
+
+The process for publishing to the two different distributions is almost exactly the same; the major differences between the two are
+
+- the `TARGET_PATH` for the standard distribution must be a subfolder of the `/cdn/` folder; the `TARGET_PATH` for the custom distribution must be a folder at the root of the bucket that is the hostname for the custom domain
+- the URL for the standard distribution always looks like `cdn.<env>.mitlibrary.net/subfolder`; the URL for the custom distribution always looks like `<hostname>.<env>.mitlibrary.net`
+
+The workflow addresses this differences during the validation process (in the **Validate and Set Distribution & Target** step). The rest of the workflow is exactly the same for both distributions.
+
+### Inputs for CDN Publishing
+
+The following values must be passed in to the shared workflow from the caller workflow:
+
+- `AWS_REGION` (*string*, **optional**): the default value is `us-east-1` (it's the region where the S3 origin bucket lives)
+- `DISTRIBUTION` (*string*, **required**): the acceptable values are either `standard` (for resources available through the standard distribution) or `custom` (for resources that are available via the custom distribution which will require a custom domain name)
+- `ENVIRONMENT` (*string*, **required**): one of `dev`, `stage`, or `prod`
+- `GHA_ROLE` (*string*, **required**): the OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
+- `SOURCE_PATH` (*string*, **required**): a relative path within the repository that will be the source for the `aws sync ...` command
+  - it can be as simple as `.`: that is, sync the whole repository
+  - it can be a nested subfolder like `path/to/foo`: that is, only sync the content inside that nested folder
+  - it cannot be an absolute path (no starting with `/`) and it cannot traverse outside the repository (e.g., no `..` to pop up a folder level)
+- `SYNC_PARAMS` (*string*, **optional**): this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, it is ignored. This is intended to be used for adding additional `--include` and/or `--exclude` arguments for any other files/folders in the web content repo that should or shouldn't be published to the S3 origin bucket
+  - The typical use for the web developer is to exclude additional top level folders (e.g., `--exclude "docs/*"`) or exclude the top level README (`--exclude "README.md"`).
+  - It **can** be used to exclude everything except for one top level folder (e.g., `--exclude "*" --include "use_only_this_folder/*"`)
+  - The workflow is configure to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory by default
+- `TARGET_PATH` (*string*, **required**): the prefix in the S3 origin bucket where the files should be synced. This should be formatted like an aboslute path (e.g., start and end with a `/`)
+  - when using the `custom` distribution, the target must be a "root level" prefix in the S3 bucket (e.g., `/<prefix>/`) amd **cannot** be `/cdn/` so that it does not overwrite any files for the standard distribution
+  - when using the `standard` distribution, the target must be a subfolder/path inside the `/cdn/` prefix; that is, it must look like `/cdn/<prefix>/` or `/cdn/<prefix>/<folder>/`
+
+To make life easy for the web developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
+
+### Example for Standard Distribution
+
+A caller workflow for the standard distibution should look like
+
+```yaml
+jobs:
+  publish-files:
+    name: Sample Dev1 Standard Publish
+    uses: mitlibraries/.github/.github/workflows/cdn-publish-shared.yml@new-cdn-publishing
+    secrets: inherit
+    with:
+      AWS_REGION: us-east-1
+      DISTRIBUTION: standard
+      ENVIRONMENT: dev
+      GHA_ROLE: web-images-gha-dev
+      SOURCE_PATH: files/
+      SYNC_PARAMS: --exclude "README.md" --exclude "*/README.md"
+      TARGET_PATH: /cdn/files/
+```
+
+### Example for Custom Distribution
+
+A caller workflow for the custom distribution should look like
+
+```yaml
+jobs:
+  publish-site:
+    name: Sample Dev1 Custom Publish
+    uses: mitlibraries/.github/.github/workflows/cdn-publish-shared.yml@new-cdn-publishing
+    secrets: inherit
+    with:
+      AWS_REGION: us-east-1
+      DISTRIBUTION: custom
+      ENVIRONMENT: dev
+      GHA_ROLE: web-images-gha-dev
+      SOURCE_PATH: .
+      TARGET_PATH: /site/
+```
 
 ## Automated Lambda@Edge Deployments
 

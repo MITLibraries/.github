@@ -34,6 +34,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: publish-${{ inputs.ENVIRONMENT }}-${{ inputs.DISTRIBUTION }}-${{ inputs.TARGET_PATH }}
+  queue: single
+
 permissions:
   # These are the minimum permissions to allow for OIDC connection to AWS
   id-token: write
@@ -48,16 +52,33 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Validate and Set Environment and Role
+      - name: Validate AWS Region
+        id: validate_aws_region
+        # Ensure that the AWS_REGION is either in US East or in US West, the only 
+        # two regions that we are currently using for deploy any S3 resources.
+        env:
+          AWS_REGION: ${{ inputs.AWS_REGION }}
+        run: |
+          echo "### Validate AWS Region" >> $GITHUB_STEP_SUMMARY
+          if [[ "${AWS_REGION}" =~ ^us-(east|west)-(1|2)$ ]]; then
+            echo "Valid. AWS_REGION=${AWS_REGION} is in US East or US West." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Invalid! AWS_REGION is not in one of our accepted regions." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      - name: Validate and Set Role & Environment
         id: validate_env_role
-        # Verify that the GHA_ROLE is properly formatted as an IAM Role name. Then,
-        # verify that ENVIRONMENT is one of "dev", "stage", or "prod". At the same
-        # time, generate the AWS_ROLE and CDN_DOMAIN values.
+        # Verify that the GHA_ROLE is properly formatted as an IAM Role name and 
+        # matches our typical OIDC GHA naming pattern. Then, verify that ENVIRONMENT
+        # is one of "dev", "stage", or "prod". Finally, set the AWS_ROLE_ARN and
+        # CDN_DOMAIN values as env vars for later.
         env:
           AWS_DEV_ACCT: ${{ secrets.AWS_ACCT_DEV }}
           AWS_STAGE_ACCT: ${{ secrets.AWS_ACCT_STAGE }}
@@ -65,122 +86,145 @@ jobs:
           ENVIRONMENT: ${{ inputs.ENVIRONMENT }}
           GHA_ROLE: ${{ inputs.GHA_ROLE }}
         run: |
-          if [[ "$GHA_ROLE" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
-            echo "Valid GHA_ROLE, proceed"
-          else
-            echo "Invalid! The GHA_ROLE is not formatted correctly, exiting."
-            exit 1
-          fi
+          echo "### Validate Inputs" >> $GITHUB_STEP_SUMMARY
+
+          echo "#### Validate ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
           case "$ENVIRONMENT" in
-            dev)
-              echo "Valid ENVIRONMENT=$ENVIRONMENT input, proceed."
-              echo "AWS_ROLE=arn:aws:iam::$AWS_DEV_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
-              echo "CDN_DOMAIN=dev1.mitlibrary.net" >> $GITHUB_ENV
+            dev) 
+              echo "Valid. The ENVIRONMENT=${ENVIRONMENT} is an acceptable value." >> $GITHUB_STEP_SUMMARY
             ;;
             stage)
-              echo "Valid ENVIRONMENT=$ENVIRONMENT input, proceed."
-              echo "AWS_ROLE=arn:aws:iam::$AWS_STAGE_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
-              echo "CDN_DOMAIN=stage.mitlibrary.net" >> $GITHUB_ENV
+              echo "Valid. The ENVIRONMENT=${ENVIRONMENT} is an acceptable value." >> $GITHUB_STEP_SUMMARY
             ;;
             prod)
-              echo "Valid ENVIRONMENT=$ENVIRONMENT input, proceed."
-              echo "AWS_ROLE=arn:aws:iam::$AWS_PROD_ACCT:role/$GHA_ROLE" >> $GITHUB_ENV
-              echo "CDN_DOMAIN=libraries.mit.edu" >> $GITHUB_ENV
+              echo "Valid. The ENVIRONMENT=${ENVIRONMENT} is an acceptable value." >> $GITHUB_STEP_SUMMARY
             ;;
             *)
-              echo "Invalid! The ENVIRONMENT is not an allowed value, exiting."
+              echo "Invalid! The ENVIRONMENT is not an allowed value." >> $GITHUB_STEP_SUMMARY
               exit 1
             ;;
           esac
 
-      - name: Validate and Set Distribution and Target
-        id: validate_distr_target          
-        # Only "standard" or "custom" are allowed values for DISTRIBUTION. 
+          echo "#### Validate GHA_ROLE" >> $GITHUB_STEP_SUMMARY
+          REGEX_FULL_TEST="^[a-zA-Z0-9_-]{1,50}-gha-${ENVIRONMENT}$"
+          if [[ "${GHA_ROLE}" =~ $REGEX_FULL_TEST ]]; then
+            echo "GHA_ROLE is formatted correctly." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Invalid! The GHA_ROLE is not formatted correctly, exiting." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "#### Generate necessary env vars" >> $GITHUB_STEP_SUMMARY
+          case "$ENVIRONMENT" in
+            dev)
+              echo "AWS_ROLE_ARN=arn:aws:iam::${AWS_DEV_ACCT}:role/${GHA_ROLE}" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=dev1.mitlibrary.net" >> $GITHUB_ENV
+            ;;
+            stage)
+              echo "AWS_ROLE_ARN=arn:aws:iam::${AWS_STAGE_ACCT}:role/${GHA_ROLE}" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=stage.mitlibrary.net" >> $GITHUB_ENV
+            ;;
+            prod)
+              echo "AWS_ROLE_ARN=arn:aws:iam::${AWS_PROD_ACCT}:role/${GHA_ROLE}" >> $GITHUB_ENV
+              echo "CDN_DOMAIN=libraries.mit.edu" >> $GITHUB_ENV
+            ;;
+          esac
+
+      - name: Validate and Set Distribution & Target
+        id: validate_distr_target
+        # Only 'standard' or 'custom' are allowed values for DISTRIBUTION. 
         # The TARGET_PATH is coupled with the DISTRIBUTION:
-        # For the "standard" distribution, the target prefix must start with "/cdn/" 
-        # and be at least one additional folder deep (e.g., "/cdn/folder/" is allowed, 
-        # but "/cdn/" is NOT allowed).
-        # For the "custom" distribution, the target prefix must be at the root of the
-        # bucket, but cannot be "/cdn/".
+        # * For the 'standard' distribution, the target prefix must start with '/cdn/' 
+        #    and be at least one additional folder deep (e.g., '/cdn/folder/' is allowed, 
+        #    but '/cdn/' is NOT allowed).
+        # * For the 'custom' distribution, the target prefix represents a hostname, thus 
+        #   it should look like '/name/'
         # Set the SSM Parameter name (SSM_PARAM) for the distribution id and the 
-        # full URL for the distribution (DISTRIBUTION_URL) values
+        # full URL for the distribution (DISTRIBUTION_URL) as env vars for later
+        # Note: the SSM parameters in the `/tfvars/...` path are tightly controlled 
+        # by our Terraform code, so we do not need to do any validation of those values.
         env:
           CDN_DOMAIN: ${{ env.CDN_DOMAIN }}
           DISTRIBUTION: ${{ inputs.DISTRIBUTION }}
           TARGET_PATH: ${{ inputs.TARGET_PATH }}
         run: |
+          echo "#### Validate DISTRIBUTION" >> $GITHUB_STEP_SUMMARY
           case "$DISTRIBUTION" in
             standard)
-              echo "Valid DISTRIBUTION=$DISTRIBUTION input, proceed."
+              echo "Valid. The DISTRIBUTION=${DISTRIBUTION} is an acceptable value." >> $GITHUB_STEP_SUMMARY
               if [[ ${TARGET_PATH} =~ ^/cdn/[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*/$ ]]; then
-                echo "Valid, the TARGET_PATH=${TARGET_PATH} is in the /cdn/ prefix."
+                echo "Valid. The TARGET_PATH=${TARGET_PATH} is in the /cdn/ prefix." >> $GITHUB_STEP_SUMMARY
                 echo "SSM_PARAM=/tfvars/libraries-website/standard-cdn-id" >> $GITHUB_ENV
                 echo "DISTRIBUTION_URL=https://cdn.${CDN_DOMAIN}${TARGET_PATH#/cdn}" >> $GITHUB_ENV
               else
-                echo "Invalid! The TARGET_PATH is not formatted correctly, exiting."
+                echo "Invalid! The TARGET_PATH is not formatted correctly, exiting." >> $GITHUB_STEP_SUMMARY
                 exit 1
               fi
             ;;
             custom)
-              echo "Valid DISTRIBUTION=$DISTRIBUTION input, proceed."
+              echo "Valid. The DISTRIBUTION=${DISTRIBUTION} is an acceptable value." >> $GITHUB_STEP_SUMMARY
               if [[ ${TARGET_PATH} =~ ^/[a-zA-Z0-9]+/$ ]] && [[ ${TARGET_PATH} != "/cdn/" ]]; then
-                echo "Valid, the TARGET_PATH=${TARGET_PATH} is a valid root prefix."
+                echo "Valid. The TARGET_PATH=${TARGET_PATH} is a valid root prefix." >> $GITHUB_STEP_SUMMARY
                 echo "SSM_PARAM=/tfvars/libraries-website/custom-cdn-id" >> $GITHUB_ENV
-                echo "DISTRIBUTION_URL=https://${CDN_DOMAIN}${TARGET_PATH#/}" >> $GITHUB_ENV
+                echo "DISTRIBUTION_URL=https://${TARGET_PATH:1:(-1)}.${CDN_DOMAIN}" >> $GITHUB_ENV
               else
-                echo "Invalid! The TARGET_PATH is not formatted correctly, exiting."
+                echo "Invalid! The TARGET_PATH is not formatted correctly, exiting." >> $GITHUB_STEP_SUMMARY
                 exit 1
               fi
             ;;
             *)
-              echo "Invalid! The DISTRIBUTION is not an allowed value, exiting."
+              echo "Invalid! The DISTRIBUTION is not an allowed value, exiting." >> $GITHUB_STEP_SUMMARY
               exit 1
             ;;
           esac
 
       - name: Validate Source Path
         id: validate_source
-        # Validate SOURCE_PATH is relative (e.g., no leading "/") and that it 
-        # exists inside the repository
+        # Validate that SOURCE_PATH is relative (e.g., no leading "/"), not empty,
+        # and that it exists inside the repository
         env:
           SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           WORKSPACE_PATH: ${{ github.workspace }}
         run: |
-          if [[ ${SOURCE_PATH:0:1} == "/" ]]; then
-            echo "Invalid. No absolute paths allowed!"
+          echo "#### Validate SOURCE_PATH" >> $GITHUB_STEP_SUMMARY
+          if [[ "${SOURCE_PATH:0:1}" == "/" ]]; then
+            echo "Invalid. No absolute paths allowed!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          elif [[ -z "${SOURCE_PATH}" ]]; then
+            echo "Invalid. Empty SOURCE_PATH not allowed!" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
-          REPO_PATH=$(realpath -e ${WORKSPACE_PATH})
-          ABSOLUTE_PATH=$(realpath -e ${WORKSPACE_PATH}/${SOURCE_PATH})
+          REPO_PATH=$(realpath -e "${WORKSPACE_PATH}")
+          ABSOLUTE_PATH=$(realpath -e "${WORKSPACE_PATH}/${SOURCE_PATH}")
           if [[ $? -ne 0 ]]; then
-            echo "Invalid! The SOURCE_PATH does not exist, exiting."
+            echo "Invalid! The SOURCE_PATH does not exist, exiting." >> $GITHUB_STEP_SUMMARY
             exit 1
           elif [[ ! "${ABSOLUTE_PATH}" =~ ^"${REPO_PATH}"(/|$) ]]; then
-            echo "Invalid! The SOURCE_PATH is not within the repository, exiting."
+            echo "Invalid! The SOURCE_PATH is not within the repository, exiting." >> $GITHUB_STEP_SUMMARY
             exit 1
           else
-            echo "Valid, the SOURCE_PATH=${SOURCE_PATH} is a valid path."
+            echo "Valid. The SOURCE_PATH=${SOURCE_PATH} is a valid path." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Validate Sync Parameters
         id: validate_sync_params
-        # Ensure that SYNC_PARAMS input only has '--include' and '--exclude' options.
-        # The technique used here strips any '--include' and' --exclude' strings from
-        # SYNC_PARAMS and then if there are any other '--' strings left (or any 
-        # newline or carriage returns) it fails fast.
+        # Ensure that SYNC_PARAMS input only has '--include' and '--exclude' options
+        # by checking the string against regex pattern (strictly accept either either of the
+        # to flags and ensure that the value for each flag is a valid folder/file path).
         env:
           SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
         run: |
+          echo "#### Validate SYNC_PARAMS" >> $GITHUB_STEP_SUMMARY
+          REGEX_FULL_TEST="^([[:space:]]*(--include|--exclude)[[:space:]]+\"[a-zA-Z0-9._\/*?-]+\")+[[:space:]]*$"
           if [[ -n "$SYNC_PARAMS" ]]; then
-            TEMP_PARAMS="${SYNC_PARAMS//--include/}"
-            TEMP_PARAMS="${TEMP_PARAMS//--exclude/}"
-            if [[ $TEMP_PARAMS =~ -- || $TEMP_PARAMS =~ $'\n' || $TEMP_PARAMS =~ $'\r' ]]; then
-              echo "Invalid! The SYNC_PARAMS can only --include and --exclude parameters, exiting."
+            if [[ ${SYNC_PARAMS} =~ $REGEX_FULL_TEST ]]; then
+              echo "Valid. The SYNC_PARAMS=${SYNC_PARAMS} is a valid string." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "Invalid! The SYNC_PARAMS can only contain '--include' and '--exclude' flags and values." >> $GITHUB_STEP_SUMMARY
               exit 1
             fi
-            echo "Valid, the SYNC_PARAMS=${SYNC_PARAMS} is a valid string."
           else
-            echo "Valid, no additional SYNC_PARAMS."
+            echo "Valid. There are no additional SYNC_PARAMS." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Configure AWS Credentials
@@ -188,11 +232,11 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ inputs.AWS_REGION }}
-          role-to-assume: ${{ env.AWS_ROLE }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
 
       - name: Set S3 Target URI
         id: s3_target
-        # Using values from SSM Parameter Store, construct the properly formatted
+        # Pull values from SSM Parameter Store, then construct the properly formatted
         # S3 URI value for the synchronization step. We can't do this earlier in the
         # validation steps, because we have to authenticate to AWS to pull the values
         # from SSM Parameter Store.
@@ -201,17 +245,20 @@ jobs:
           SSM_PARAM: ${{ env.SSM_PARAM }}
           TARGET_PATH: ${{ inputs.TARGET_PATH }}
         run: |
+          echo "### Set S3 Origin Destination" >> $GITHUB_STEP_SUMMARY
           BUCKET=$(aws ssm get-parameter \
-            --region ${AWS_REGION} \
+            --region "${AWS_REGION}" \
             --name "/tfvars/libraries-website/cdn-origin-bucket-name" \
             --query 'Parameter.Value' \
-            --output text)
+            --output text) \
+            || { echo "Failed to retrieve bucket name from SSM Parameter Store" >> $GITHUB_STEP_SUMMARY; exit 1; }
           echo "DISTRIBUTION_ID=$(aws ssm get-parameter \
-            --region ${AWS_REGION} \
-            --name ${SSM_PARAM} \
+            --region "${AWS_REGION}" \
+            --name "${SSM_PARAM}" \
             --query 'Parameter.Value' \
             --output text)" >> $GITHUB_ENV
           echo "S3URI=s3://${BUCKET}${TARGET_PATH%/}" >> $GITHUB_ENV
+          echo "S3 origin destination URI: s3://${BUCKET}${TARGET_PATH%/}" >> $GITHUB_STEP_SUMMARY
 
       - name: Sync to S3 Origin
         id: sync
@@ -223,7 +270,7 @@ jobs:
           SOURCE_PATH: ${{ inputs.SOURCE_PATH }}
           SYNC_PARAMS: ${{ inputs.SYNC_PARAMS }}
         run: |
-          echo "### Content synchronization to $S3URI." >> $GITHUB_STEP_SUMMARY
+          echo "### Synchronize Content" >> $GITHUB_STEP_SUMMARY
           cd "$GITHUB_WORKSPACE"
 
           # Build an array with the default command line parameters for the sync command
@@ -243,9 +290,10 @@ jobs:
               < <(printf '%s' "$SYNC_PARAMS" | xargs printf '%s\0')
             sync_cmd+=("${extra_params[@]}")
           fi
-
+          echo "Start content synchronization." >> $GITHUB_STEP_SUMMARY
           aws s3 sync "${sync_cmd[@]}"
-          echo "Content is synchronized to $S3URI." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Content is synchronized." >> $GITHUB_STEP_SUMMARY
 
       - name: Invalidate Cache
         id: invalidate_cache
@@ -257,7 +305,8 @@ jobs:
           DISTRIBUTION_URL: ${{ env.DISTRIBUTION_URL }}
           TARGET_PATH: ${{ inputs.TARGET_PATH }}
         run: |
-          echo "### CDN cache invalidation" >> $GITHUB_STEP_SUMMARY
+          echo "### Invalidate CloudFront Cache" >> $GITHUB_STEP_SUMMARY
+          echo "Start cache invalidation." >> $GITHUB_STEP_SUMMARY
           INVALIDATION_ID=$(aws cloudfront create-invalidation \
               --distribution-id "$DISTRIBUTION_ID" \
               --paths "${TARGET_PATH%/}/*" \
@@ -267,4 +316,5 @@ jobs:
               --distribution-id "$DISTRIBUTION_ID" \
               --id "$INVALIDATION_ID"
           echo "The cache has been cleared." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "The updates to ${DISTRIBUTION_URL} are now available." >> $GITHUB_STEP_SUMMARY
