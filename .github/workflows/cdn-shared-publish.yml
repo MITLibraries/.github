@@ -38,6 +38,11 @@ jobs:
       contents: read
 
     steps:
+      - name: Deprecation Notice
+        run: |
+          echo "### DEPRECATION NOTICE" >> $GITHUB_STEP_SUMMARY
+          echo "This shared workflow is deprecated. Please use 'cdn-publish-shared.yml' instead."
+
       - uses: actions/checkout@v4
 
       - name: DEV Configure AWS credentials
