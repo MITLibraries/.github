@@ -139,6 +139,12 @@ jobs:
         if: ${{ steps.buildcheck.outputs.ruby_repo == '1' }}
         uses: ruby/setup-ruby@v1 # by default, this uses the .ruby-version file to set the version
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
+
       - name: Run pre-build steps
         # Only run this step if the app developer has specified "pre-build" commands
         # in the caller workflow.
@@ -146,12 +152,6 @@ jobs:
         env:
           PREBUILD: ${{ inputs.PREBUILD }}
         run: ${PREBUILD}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-region: ${{ inputs.AWS_REGION }}
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCT_STAGE }}:role/${{ inputs.GHA_ROLE }}
 
       - name: Login to Amazon ECR
         id: login-ecr
