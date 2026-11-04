@@ -309,7 +309,8 @@ The workflow addresses these differences during the validation process (in the *
 
 The following values must be passed in to the shared workflow from the caller workflow:
 
-- `AWS_REGION` (*string*, **optional**): the default value is `us-east-1` (it's the region where the S3 origin bucket lives)
+- `AWS_REGION` (*string*, **optional**, default=`us-east-1`)
+- `BUILD_ARTIFACT` (*string*, **optional**, default=''): if the objects to be uploaded come from using `actions/upload-artifact`, the caller workflow must set this value to enable this workflow to use the `actions/download-artifact` to get the objects to upload to the CDN bucket
 - `DISTRIBUTION` (*string*, **required**): the acceptable values are either `standard` (for resources available through the standard distribution) or `custom` (for resources that are available via the custom distribution which will require a custom domain name)
 - `ENVIRONMENT` (*string*, **required**): one of `dev`, `stage`, or `prod`
 - `GHA_ROLE` (*string*, **required**): the OIDC role (managed by the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository)
@@ -320,12 +321,10 @@ The following values must be passed in to the shared workflow from the caller wo
 - `SYNC_PARAMS` (*string*, **optional**): this is a string that is appended to the `aws s3 sync` command. If nothing is passed from the caller workflow, it is ignored. This is intended to be used for adding additional `--include` and/or `--exclude` arguments for any other files/folders in the web content repo that should or shouldn't be published to the S3 origin bucket
   - The typical use for the web developer is to exclude additional top level folders (e.g., `--exclude "docs/*"`) or exclude the top level README (`--exclude "README.md"`).
   - It **can** be used to exclude everything except for one top level folder (e.g., `--exclude "*" --include "use_only_this_folder/*"`)
-  - The workflow is configure to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory by default
-- `TARGET_PATH` (*string*, **required**): the prefix in the S3 origin bucket where the files should be synced. This should be formatted like an aboslute path (e.g., start and end with a `/`)
+  - The workflow is configured to ignore the `.gitignore` file, the `.git` directory, and the `.github` directory by default
+- `TARGET_PATH` (*string*, **required**): the prefix in the S3 origin bucket where the files should be synced. This should be formatted like an absolute path (e.g., start and end with a `/`)
   - when using the `custom` distribution, the target must be a "root level" prefix in the S3 bucket (e.g., `/<prefix>/`) amd **cannot** be `/cdn/` so that it does not overwrite any files for the standard distribution
   - when using the `standard` distribution, the target must be a subfolder/path inside the `/cdn/` prefix; that is, it must look like `/cdn/<prefix>/` or `/cdn/<prefix>/<folder>/`
-
-To make life easy for the web developers, the [mitlib-tf-workloads-libraries-website](https://github.com/MITLibraries/mitlib-tf-workloads-libraries-website) repository generates the correct caller workflow for the custom domain sites and stores it as a Terraform output in TfCloud. This can be copy/pasted into the repository containing the content to be published to the CDN.
 
 ### Example for Standard Distribution
 
