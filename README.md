@@ -303,7 +303,7 @@ The process for publishing to the two different distributions is almost exactly 
 - the `TARGET_PATH` for the standard distribution must be a subfolder of the `/cdn/` folder; the `TARGET_PATH` for the custom distribution must be a folder at the root of the bucket that is the hostname for the custom domain
 - the URL for the standard distribution always looks like `cdn.<env>.mitlibrary.net/subfolder`; the URL for the custom distribution always looks like `<hostname>.<env>.mitlibrary.net`
 
-The workflow addresses this differences during the validation process (in the **Validate and Set Distribution & Target** step). The rest of the workflow is exactly the same for both distributions.
+The workflow addresses these differences during the validation process (in the **Validate and Set Distribution & Target** step). The rest of the workflow is exactly the same for both distributions.
 
 ### Inputs for CDN Publishing
 
