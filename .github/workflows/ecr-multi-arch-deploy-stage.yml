@@ -168,6 +168,8 @@ jobs:
         run: |
           echo "### :whale: Docker Build" >> $GITHUB_STEP_SUMMARY
           DOCKER_BUILDKIT=1 docker build \
+            --provenance=false \
+            --sbom=false \
             -f ${DOCKERFILE} \
             -t ${REGISTRY}/${REPOSITORY}:${TAG_LATEST} \
             -t ${REGISTRY}/${REPOSITORY}:${TAG_SHA} \
